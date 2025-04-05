@@ -6,6 +6,8 @@
 
 #define PORT 12345
 
+void toFile(FILE* out, char* buffer){};
+
 int main(int argc, char** argv) {
     WSADATA wsaData;
     SOCKET socketHandle;
@@ -13,6 +15,33 @@ int main(int argc, char** argv) {
     char buffer[1024];
     int senderAddressSize = sizeof(senderAddress);
     int bytesReceived;
+
+    //create basic output file
+    FILE* file;
+    int opened = 1;
+
+    //output file name specified as command line argument
+    if (argc == 2){
+        file = fopen(argv[1], "wb");
+        //if file could not be opened redirect to stdout
+        if (file == NULL){
+            printf("Output file could not be opened/created\n");
+            printf("redirecting to stdout\n");
+            file = stdout;
+            opened = 0;
+        }
+    }
+    
+    else{
+        file = fopen("output.txt","wb");
+        //if file could not be opened redirect to stdout
+        if (file == NULL){
+            printf("Output file could not be opened/created\n");
+            printf("redirecting to stdout\n");
+            file = stdout;
+            opened = 0;
+        }
+    }
 
     // Winsock
     if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
@@ -60,10 +89,30 @@ int main(int argc, char** argv) {
                inet_ntoa(senderAddress.sin_addr),
                ntohs(senderAddress.sin_port),
                buffer);
+
+        //write file
+        toFile(file, buffer);
+    }
+
+    if (opened == 1){
+        fclose(file);
     }
 
     // Cleanup
     closesocket(socketHandle);
     WSACleanup();
     return 0;
+}
+
+
+/* Writes contents of buffer to specified output file
+ * @param out     = output stream (file)
+ * @param buffer  = char array of incomming data (last char must be '\0')
+ */
+void toFile(FILE* out, char* buffer){
+    int i = 0;
+    while (buffer[i]  != '\0'){
+        fputc(buffer[i], out);
+        i++;
+    }
 }
