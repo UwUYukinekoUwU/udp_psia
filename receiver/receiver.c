@@ -4,15 +4,15 @@
 
 #pragma comment(lib, "ws2_32.lib")
 
-#define PORT 12345
+#define PORT 5555
 
-void toFile(FILE* out, char* buffer){};
+void toFile(FILE* out, char* buffer);
 
 int main(int argc, char** argv) {
     WSADATA wsaData;
     SOCKET socketHandle;
     struct sockaddr_in serverAddress, senderAddress;
-    char buffer[1024];
+    char buffer[1020];
     int senderAddressSize = sizeof(senderAddress);
     int bytesReceived;
 
