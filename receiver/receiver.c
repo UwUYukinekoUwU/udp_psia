@@ -66,7 +66,7 @@ int main() {
         buffer[bytesReceived] = '\0';
 
         //first packet, must create new file
-        if(getId(buffer) == 0){
+        if(getId(buffer) == 0 && RUNNING == 1){
             char* filename = getFileName(buffer, bytesReceived);
             if (filename != NULL){
                 file = fopen(filename,"wb");
@@ -125,10 +125,9 @@ void toFile(FILE* out, char* buffer){
  */
 int getId(char* buffer){
     int id =0;
-    id = buffer[0] + (buffer[1] << 8) + (buffer[2] << 16) + (buffer[3] << 24);
+    id = ((unsigned char)buffer[0] | (unsigned char)buffer[1] << 8 | (unsigned char)buffer[2] << 16 | (unsigned char)buffer[3] << 24);
     return id;
 }
-
 
 /* Reads file name from packet
  * @param buffer         = char array of incomming data (last char must be '\0')
@@ -141,8 +140,10 @@ char* getFileName(char* buffer, int bytesReceived){
         return NULL;
     }
 
-    for (int i = 4; buffer[i] != '\0'; i++){
+    int i;
+    for (i = 4; i < bytesReceived && buffer[i] != '\0'; i++){
         fileName[i-4] = buffer[i]; 
     }
+    filename[i-4] = '\0';
     return fileName;
 }
