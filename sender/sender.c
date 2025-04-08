@@ -1,13 +1,15 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <winsock2.h>
 
 #pragma comment(lib, "ws2_32.lib")
 
-#define TARGET_PORT 12345
+#define TARGET_PORT 5555
 #define TARGET_IP "127.0.0.1"
 
-#define BUFF_SIZE 1020
+#define BUFF_SIZE 1024
+#define DFRAME_SIZE 1020
 
 
 typedef struct {
@@ -17,7 +19,7 @@ typedef struct {
 } SockWrapper;
 
 
-
+int sock_send(SockWrapper* s_wrapper, char* message, int message_length);
 int gen_next_packet(FILE* file, char* result);
 int init_socket(SockWrapper* sock_wrapper);
 
@@ -26,30 +28,38 @@ int main(int argc, char** argv) {
     if (init_socket(&s_wrapper) != 0) return 1;
 
     FILE* input_file = fopen(argv[1], "rb");
-    if (input_file == NULL){
-        printf("couldn't open file at location %s", argv[1]);
+    if (input_file == NULL){ printf("couldn't open file at location %s", argv[1]);
         return 1;
     }
+    fseek(input_file, 0L, SEEK_END);
+    int file_len = ftell(input_file);
+    fseek(input_file, 0L, SEEK_SET);
 
+    char message[BUFF_SIZE] = {0};
     int message_length = 0;
 
-    while (1){
-        char message[BUFF_SIZE];
+    //first_packet
+    memcpy(message + 4, &file_len, sizeof(int));
+    memcpy(message + 8, argv[1], strlen(argv[1]) + 1);
+    if (sock_send(&s_wrapper, message, message_length) != 0) return 1;
+    printf("%d ", message[4]);
+    printf("%s\n", &message[8]);
 
-        message_length = gen_next_packet(input_file, message);
+    int file_index = 1;
+    while (1){
+        memcpy(message, &file_index, sizeof(int));
+        message_length = gen_next_packet(input_file, &message[4]);
         if (message_length == 0)
             break;
 
         // Send the message
-        if (sendto(s_wrapper.socket_handle, message, message_length, 0,
-                   (struct sockaddr*)&(s_wrapper.target_address), sizeof(s_wrapper.target_address)) == SOCKET_ERROR) {
-            printf("sendto() failed. Error: %d\n", WSAGetLastError());
-            closesocket(s_wrapper.socket_handle);
-            WSACleanup();
+        if(sock_send(&s_wrapper, message, message_length) != 0){
             return 1;
         }
 
-        printf("Sent message: %s\n", message);
+        printf("%d ", message[0]);
+        printf("%s\n", &message[4]);
+        file_index++;
     }
 
 
@@ -60,10 +70,22 @@ int main(int argc, char** argv) {
     return 0;
 }
 
-/* Returns the number of bytes read, -1 on error. Fills the result array with the next BUFF_SIZE bytes of the file
+int sock_send(SockWrapper* s_wrapper, char* message, int message_length) {
+    if (sendto(s_wrapper->socket_handle, message, message_length, 0,
+             (struct sockaddr*)&(s_wrapper->target_address), sizeof(s_wrapper->target_address)) == SOCKET_ERROR) {
+        printf("sendto() failed. Error: %d\n", WSAGetLastError());
+        closesocket(s_wrapper->socket_handle);
+        WSACleanup();
+        return 1;
+        }
+    return 0;
+}
+
+
+/* Returns the number of bytes read, -1 on error. Fills the result array with the next DFRAME_SIZE bytes of the file
  * specified.*/
 int gen_next_packet(FILE* file, char* result){
-    return fread(result, 1, BUFF_SIZE, file);
+    return fread(result, 1, DFRAME_SIZE, file);
 }
 
 int init_socket(SockWrapper* sock_wrapper){

@@ -14,7 +14,7 @@ int main() {
     WSADATA wsaData;
     SOCKET socketHandle;
     struct sockaddr_in serverAddress, senderAddress;
-    char buffer[1020];
+    char buffer[1024];
     int senderAddressSize = sizeof(senderAddress);
     int bytesReceived;
 
@@ -126,6 +126,7 @@ void toFile(FILE* out, char* buffer){
 int getId(char* buffer){
     int id =0;
     id = ((unsigned char)buffer[0] | (unsigned char)buffer[1] << 8 | (unsigned char)buffer[2] << 16 | (unsigned char)buffer[3] << 24);
+    printf("%d\n", id);
     return id;
 }
 
@@ -144,6 +145,6 @@ char* getFileName(char* buffer, int bytesReceived){
     for (i = 4; i < bytesReceived && buffer[i] != '\0'; i++){
         fileName[i-4] = buffer[i]; 
     }
-    filename[i-4] = '\0';
+    fileName[i-4] = '\0';
     return fileName;
 }
