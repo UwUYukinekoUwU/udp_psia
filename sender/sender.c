@@ -10,6 +10,7 @@
 
 #define BUFF_SIZE 1024
 #define DFRAME_SIZE 1020
+#define HEADER_LENGTH 4
 
 
 typedef struct {
@@ -36,26 +37,23 @@ int main(int argc, char** argv) {
     fseek(input_file, 0L, SEEK_SET);
 
     char message[BUFF_SIZE] = {0};
-    int message_length = 0;
-
+    int message_length = HEADER_LENGTH + 4 + strlen(argv[1]);
     //first_packet
     memcpy(message + 4, &file_len, sizeof(int));
     memcpy(message + 8, argv[1], strlen(argv[1]) + 1);
-    if (sock_send(&s_wrapper, message, message_length) != 0) return 1;
+    if (sock_send(&s_wrapper, message, message_length)) return 1;
     printf("%d ", message[4]);
     printf("%s\n", &message[8]);
 
     int file_index = 1;
     while (1){
         memcpy(message, &file_index, sizeof(int));
-        message_length = gen_next_packet(input_file, &message[4]);
-        if (message_length == 0)
+        message_length = gen_next_packet(input_file, &message[4]) + HEADER_LENGTH;
+        if (message_length == HEADER_LENGTH)
             break;
 
         // Send the message
-        if(sock_send(&s_wrapper, message, message_length) != 0){
-            return 1;
-        }
+        if(sock_send(&s_wrapper, message, message_length)) return 1;
 
         printf("%d ", message[0]);
         printf("%s\n", &message[4]);
