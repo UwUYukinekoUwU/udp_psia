@@ -48,6 +48,7 @@ int main() {
 
     FILE* file;
     int opened = 0;
+    int file_len = 0;
 
     // Receive message
     while (RUNNING){
@@ -67,7 +68,11 @@ int main() {
 
         //first packet, must create new file
         if(getId(buffer) == 0 && RUNNING == 1){
+
+            //get message length and name of file
+            file_len = getLength(buffer);
             char* filename = getFileName(buffer, bytesReceived);
+
             if (filename != NULL){
                 file = fopen(filename,"wb");
                 if (file != NULL){
@@ -130,21 +135,31 @@ int getId(char* buffer){
     return id;
 }
 
+/* Reads second 4 bytes as int value of lenght of incomming data
+ * @param buffer  = char array of incomming data (last char must be '\0')
+ * return file length
+ */
+int getLength(char* buffer){
+    int length = 0;
+    length = ((unsigned char)buffer[4] | (unsigned char)buffer[5] << 8 | (unsigned char)buffer[6] << 16 | (unsigned char)buffer[7] << 24);
+    return length;
+}
+
 /* Reads file name from packet
  * @param buffer         = char array of incomming data (last char must be '\0')
  * @param bytesReceived  = number of bytes received
  * return name of file
  */
 char* getFileName(char* buffer, int bytesReceived){
-    char* fileName = malloc(bytesReceived-4);
+    char* fileName = malloc(bytesReceived-8);
     if (fileName == NULL){
         return NULL;
     }
 
     int i;
-    for (i = 4; i < bytesReceived && buffer[i] != '\0'; i++){
-        fileName[i-4] = buffer[i]; 
+    for (i = 8; i < bytesReceived && buffer[i] != '\0'; i++){
+        fileName[i-8] = buffer[i]; 
     }
-    fileName[i-4] = '\0';
+    fileName[i-8] = '\0';
     return fileName;
 }
