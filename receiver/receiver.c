@@ -8,6 +8,7 @@
 
 void toFile(FILE* out, char* buffer);
 int getId(char* buffer);
+int getLength(char* buffer);
 char* getFileName(char* buffer, int bytesReceived);
 
 int main() {
@@ -77,7 +78,7 @@ int main() {
                 file = fopen(filename,"wb");
                 if (file != NULL){
                     opened = 1;
-                    printf("Receiving file: %s",filename);
+                    printf("Receiving file: %s\n",filename);
                     free(filename);
                 }
             }
@@ -86,11 +87,11 @@ int main() {
                 printf("Output file could not be opened/created\n");
                 printf("redirecting to stdout\n");
                 file = stdout;
-                opened = 0;
+                opened = 1;
             }
         }
         //if other than first then write to file if file is opened
-        else if (opened == 1 && RUNNING == 1){
+        else if (opened && RUNNING == 1){
             toFile(file, buffer);
         }
 
