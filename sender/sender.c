@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <winsock2.h>
+#include "../checksum.h"
 
 #pragma comment(lib, "ws2_32.lib")
 
@@ -10,8 +11,13 @@
 
 #define BUFF_SIZE 1024
 #define DFRAME_SIZE 1020
-#define HEADER_LENGTH 4
+#define CRC_LEN_BYTES 32 / 8
+#define HEADER_LENGTH 4 + CRC_LEN_BYTES
 
+// PACKET FORMAT: (max size: 1024)
+// first packet: [zero(4), file len(4), crc(CRC_LEN_BYTES), file name(-)]
+// mid packet:   [file index(4), crc(CRC_LEN_BYTES), content(-)]
+// last packet:  [...]
 
 typedef struct {
     WSADATA wsa_data;
@@ -23,6 +29,7 @@ typedef struct {
 int sock_send(SockWrapper* s_wrapper, char* message, int message_length);
 int gen_next_packet(FILE* file, char* result);
 int init_socket(SockWrapper* sock_wrapper);
+int send_file(SockWrapper s_wrapper, FILE* input_file, char* filename);
 
 int main(int argc, char** argv) {
     SockWrapper s_wrapper;
@@ -32,15 +39,27 @@ int main(int argc, char** argv) {
     if (input_file == NULL){ printf("couldn't open file at location %s", argv[1]);
         return 1;
     }
+    if (send_file(s_wrapper, input_file, argv[1]) != 0){
+        return 1;
+    }
+
+    // Cleanup
+    closesocket(s_wrapper.socket_handle);
+    WSACleanup();
+    fclose(input_file);
+    return 0;
+}
+
+int send_file(SockWrapper s_wrapper, FILE* input_file, char* filename){
     fseek(input_file, 0L, SEEK_END);
     int file_len = ftell(input_file);
     fseek(input_file, 0L, SEEK_SET);
 
     char message[BUFF_SIZE] = {0};
-    int message_length = HEADER_LENGTH + 4 + strlen(argv[1]);
+    int message_length = HEADER_LENGTH + 4 + strlen(filename);
     //first_packet
     memcpy(message + 4, &file_len, sizeof(int));
-    memcpy(message + 8, argv[1], strlen(argv[1]) + 1);
+    memcpy(message + 8, filename, strlen(filename) + 1);
     if (sock_send(&s_wrapper, message, message_length)) return 1;
     printf("%d ", message[4]);
     printf("%s\n", &message[8]);
@@ -48,7 +67,7 @@ int main(int argc, char** argv) {
     int file_index = 1;
     while (1){
         memcpy(message, &file_index, sizeof(int));
-        message_length = gen_next_packet(input_file, &message[4]) + HEADER_LENGTH;
+        message_length = gen_next_packet(input_file, message) + HEADER_LENGTH;
         if (message_length == HEADER_LENGTH)
             break;
 
@@ -59,12 +78,6 @@ int main(int argc, char** argv) {
         printf("%s\n", &message[4]);
         file_index++;
     }
-
-
-    // Cleanup
-    closesocket(s_wrapper.socket_handle);
-    WSACleanup();
-    fclose(input_file);
     return 0;
 }
 
@@ -81,10 +94,17 @@ int sock_send(SockWrapper* s_wrapper, char* message, int message_length) {
 
 
 /* Returns the number of bytes read, -1 on error. Fills the result array with the next DFRAME_SIZE bytes of the file
- * specified.*/
+ * specified. The array starts with the CRC code for all data that follows.*/
 int gen_next_packet(FILE* file, char* result){
-    return fread(result, 1, DFRAME_SIZE, file);
+    int bytes_read = fread(&(result[HEADER_LENGTH]), 1, DFRAME_SIZE - HEADER_LENGTH, file);
+    int crc = crc_32(&(result[HEADER_LENGTH]), bytes_read);
+    for (int i = 0; i < 4; i++){
+        update_crc_32(crc, result[i]);
+    }
+    memcpy(&result[4], &crc, CRC_LEN_BYTES);
+    return bytes_read;
 }
+
 
 int init_socket(SockWrapper* sock_wrapper){
     WSADATA wsa_data;
