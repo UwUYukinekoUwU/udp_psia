@@ -4,7 +4,7 @@
 
 #pragma comment(lib, "ws2_32.lib")
 
-#define PORT 5555
+#define PORT 5200
 
 void toFile(FILE* out, char* buffer);
 int getId(char* buffer);
@@ -50,6 +50,7 @@ int main() {
     FILE* file;
     int opened = 0;
     int file_len = 0;
+    int received_len = 0;
 
     // Receive message
     while (RUNNING){
@@ -93,6 +94,7 @@ int main() {
         //if other than first then write to file if file is opened
         else if (opened && RUNNING == 1){
             toFile(file, buffer);
+            received_len += bytesReceived - 4;
         }
 
         printf("Received from %s:%d - %s\n",
@@ -100,7 +102,13 @@ int main() {
                ntohs(senderAddress.sin_port),
                buffer);
 
+        if (received_len == file_len)
+        {
+            RUNNING = 0;
+        }
     }
+
+    printf("%d %d\n", received_len, file_len);
 
     if (opened == 1){
         fclose(file);
@@ -132,7 +140,7 @@ void toFile(FILE* out, char* buffer){
 int getId(char* buffer){
     int id =0;
     id = ((unsigned char)buffer[0] | (unsigned char)buffer[1] << 8 | (unsigned char)buffer[2] << 16 | (unsigned char)buffer[3] << 24);
-    printf("%d\n", id);
+    printf("message id: %d\n", id);
     return id;
 }
 
