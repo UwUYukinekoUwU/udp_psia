@@ -5,7 +5,7 @@
 
 #pragma comment(lib, "ws2_32.lib")
 
-#define TARGET_PORT 5555
+#define TARGET_PORT 5200
 #define TARGET_IP "127.0.0.1"
 
 #define BUFF_SIZE 1024

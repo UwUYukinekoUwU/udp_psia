@@ -6,7 +6,7 @@
 
 #define PORT 5200
 
-void toFile(FILE* out, char* buffer);
+void toFile(FILE* out, char* buffer, int bytesReceived);
 int getId(char* buffer);
 int getLength(char* buffer);
 char* getFileName(char* buffer, int bytesReceived);
@@ -65,8 +65,6 @@ int main() {
         }
 
         if (bytesReceived == 0) RUNNING = 0;
-        // Add null
-        buffer[bytesReceived] = '\0';
 
         //first packet, must create new file
         if(getId(buffer) == 0 && RUNNING == 1){
@@ -93,7 +91,7 @@ int main() {
         }
         //if other than first then write to file if file is opened
         else if (opened && RUNNING == 1){
-            toFile(file, buffer);
+            toFile(file, buffer, bytesReceived);
             received_len += bytesReceived - 4;
         }
 
@@ -108,7 +106,7 @@ int main() {
         }
     }
 
-    printf("%d %d\n", received_len, file_len);
+    printf("Bytes received: %d\nBytes to be received: %d\n", received_len, file_len);
 
     if (opened == 1){
         fclose(file);
@@ -125,10 +123,10 @@ int main() {
  * @param out     = output stream (file)
  * @param buffer  = char array of incomming data (last char must be '\0')
  */
-void toFile(FILE* out, char* buffer){
+void toFile(FILE* out, char* buffer, int bytesReceived){
     int i = 4;
-    while (buffer[i]  != '\0'){
-        fputc(buffer[i], out);
+    while (i < bytesReceived){
+        fwrite(&buffer[i], sizeof(char), 1, out);
         i++;
     }
 }
