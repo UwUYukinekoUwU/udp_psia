@@ -43,8 +43,7 @@ int main(int argc, char** argv) {
     memcpy(message + 4, &file_len, sizeof(int));
     memcpy(message + 8, argv[1], strlen(argv[1]) + 1);
     if (sock_send(&s_wrapper, message, message_length)) return 1;
-    printf("%d ", message[4]);
-    printf("%s\n", &message[8]);
+    printf("%d \n", ((int*)message)[1]);
 
     int file_index = 1;
     while (1){
@@ -57,6 +56,7 @@ int main(int argc, char** argv) {
         if(sock_send(&s_wrapper, message, message_length)) return 1;
 
         usleep(30000);
+        printf("%d\n", ((int*)message)[0]);
         file_index++;
     }
 
