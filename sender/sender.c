@@ -2,11 +2,12 @@
 #include <stdlib.h>
 #include <string.h>
 #include <winsock2.h>
+#include <unistd.h>
 
 #pragma comment(lib, "ws2_32.lib")
 
 #define TARGET_PORT 5200
-#define TARGET_IP "127.0.0.1"
+#define TARGET_IP "192.168.193.100"
 
 #define BUFF_SIZE 1024
 #define DFRAME_SIZE 1020
@@ -55,8 +56,7 @@ int main(int argc, char** argv) {
         // Send the message
         if(sock_send(&s_wrapper, message, message_length)) return 1;
 
-        printf("%d ", message[0]);
-        printf("%s\n", &message[4]);
+        usleep(30000);
         file_index++;
     }
 
