@@ -1,41 +1,53 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <winsock2.h>
+#include "../checksum.h"
 
 #pragma comment(lib, "ws2_32.lib")
 
 #define PORT 5200
+#define CRC_LEN_BYTES 32 / 8
+#define HEADER_LENGTH 4 + CRC_LEN_BYTES
+#define BUFFER_SIZE 1024
+
+typedef struct {
+    int id;
+    int crc;
+    char* content;
+    int content_length;
+} Packet;
 
 void toFile(FILE* out, char* buffer, int bytesReceived);
-int getId(char* buffer);
-int getLength(char* buffer);
-char* getFileName(char* buffer, int bytesReceived);
+Packet parsePacket(char* buffer, int bytesReceived);
+int checkCRC(Packet packet);
+void sendConfirmation(SOCKET socketHandle, struct sockaddr_in* senderAddress, int id);
 
 int main() {
     WSADATA wsaData;
     SOCKET socketHandle;
     struct sockaddr_in serverAddress, senderAddress;
-    char buffer[1024];
+    char buffer[BUFFER_SIZE];
     int senderAddressSize = sizeof(senderAddress);
     int bytesReceived;
 
-    // Winsock
+    // Winsock Initialization
     if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
         printf("WSAStartup failed. Error: %d\n", WSAGetLastError());
         return 1;
     }
 
-    // UDP socket
+    // Create UDP Socket
     if ((socketHandle = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) == INVALID_SOCKET) {
         printf("Socket creation failed. Error: %d\n", WSAGetLastError());
         WSACleanup();
         return 1;
     }
+
+    // Bind Socket
     serverAddress.sin_family = AF_INET;
     serverAddress.sin_port = htons(PORT);
     serverAddress.sin_addr.s_addr = INADDR_ANY;
-
-    // Bind
     if (bind(socketHandle, (struct sockaddr*)&serverAddress, sizeof(serverAddress)) == SOCKET_ERROR) {
         printf("Bind failed. Error: %d\n", WSAGetLastError());
         closesocket(socketHandle);
@@ -45,128 +57,107 @@ int main() {
 
     printf("Listening for UDP messages on port %d...\n", PORT);
 
-    int RUNNING = 1;
+    FILE* file = NULL;
+    int file_len = 0, received_len = 0, lastConfirmed = -1;
 
-    FILE* file;
-    int opened = 0;
-    int file_len = 0;
-    int received_len = 0;
-
-    // Receive message
-    while (RUNNING){
-        
+    // Main Loop
+    while (1) {
         bytesReceived = recvfrom(socketHandle, buffer, sizeof(buffer), 0,
                                  (struct sockaddr*)&senderAddress, &senderAddressSize);
         if (bytesReceived == SOCKET_ERROR) {
             printf("recvfrom() failed. Error: %d\n", WSAGetLastError());
-            closesocket(socketHandle);
-            WSACleanup();
-            return 1;
+            break;
         }
 
-        if (bytesReceived == 0) RUNNING = 0;
+        Packet packet = parsePacket(buffer, bytesReceived);
 
-        //first packet, must create new file
-        if(getId(buffer) == 0 && RUNNING == 1){
+        // First Packet: Initialize File
+        if (packet.id == 0) {
+            if (!checkCRC(packet)) {
+                lastConfirmed = 0;
+                sendConfirmation(socketHandle, &senderAddress, lastConfirmed);
 
-            //get message length and name of file
-            file_len = getLength(buffer);
-            char* filename = getFileName(buffer, bytesReceived);
+                file_len = *((int*)(packet.content));
+                char* filename = packet.content + sizeof(int);
 
-            if (filename != NULL){
-                file = fopen(filename,"wb");
-                if (file != NULL){
-                    opened = 1;
-                    printf("Receiving file: %s\n",filename);
-                    free(filename);
+                file = fopen(filename, "wb");
+                if (!file) {
+                    printf("Failed to open file. Redirecting to stdout.\n");
+                    file = stdout;
                 }
-            }
-            //if file could not be opened redirect to stdout
-            if (file == NULL){
-                printf("Output file could not be opened/created\n");
-                printf("redirecting to stdout\n");
-                file = stdout;
-                opened = 1;
+                printf("Receiving file: %s\n", filename);
+            } else {
+                printf("CRC error in first packet.\n");
+                sendConfirmation(socketHandle, &senderAddress, -1);
             }
         }
-        //if other than first then write to file if file is opened
-        else if (opened && RUNNING == 1){
-            toFile(file, buffer, bytesReceived);
-            received_len += bytesReceived - 4;
+        // Subsequent Packets
+        else if (packet.id == lastConfirmed + 1) {
+            if (!checkCRC(packet)) {
+                lastConfirmed = packet.id;
+                sendConfirmation(socketHandle, &senderAddress, lastConfirmed);
+
+                toFile(file, packet.content, packet.content_length);
+                received_len += packet.content_length;
+
+                if (received_len >= file_len) {
+                    printf("File transfer complete.\n");
+                    break;
+                }
+            } else {
+                printf("CRC error in packet %d.\n", packet.id);
+                sendConfirmation(socketHandle, &senderAddress, lastConfirmed);
+            }
+        } else {
+            printf("Out-of-order packet received. Expected %d, got %d.\n", lastConfirmed + 1, packet.id);
+            sendConfirmation(socketHandle, &senderAddress, lastConfirmed);
         }
 
-        printf("Received from %s:%d - %s\n",
-               inet_ntoa(senderAddress.sin_addr),
-               ntohs(senderAddress.sin_port),
-               buffer);
-
-        if (received_len == file_len)
-        {
-            RUNNING = 0;
-        }
+        free(packet.content);
     }
 
-    printf("Bytes received: %d\nBytes to be received: %d\n", received_len, file_len);
-
-    if (opened == 1){
-        fclose(file);
-    }
-
-    // Cleanup
+    if (file && file != stdout) fclose(file);
     closesocket(socketHandle);
     WSACleanup();
     return 0;
 }
 
-
-/* Writes contents of buffer to specified output file
- * @param out     = output stream (file)
- * @param buffer  = char array of incomming data (last char must be '\0')
- */
-void toFile(FILE* out, char* buffer, int bytesReceived){
-    int i = 4;
-    while (i < bytesReceived){
-        fwrite(&buffer[i], sizeof(char), 1, out);
-        i++;
+Packet parsePacket(char* buffer, int bytesReceived) {
+    Packet packet;
+    packet.id = *((int*)buffer);
+    
+    packet.content_length = bytesReceived - HEADER_LENGTH;
+    if (packet.id == 0) {
+        // First packet: Content includes file length and filename
+        packet.crc = *((int*)(buffer + 8));
+        packet.content = malloc(packet.content_length);
+        if (!packet.content) {
+            printf("Memory allocation failed for first packet content.\n");
+            exit(1);
+        }
+        memcpy(packet.content, buffer + HEADER_LENGTH, packet.content_length);
+    } else {
+        // Subsequent packets: Content includes file data
+        packet.crc = *((int*)(buffer + 4));
+        packet.content = malloc(packet.content_length);
+        if (!packet.content) {
+            printf("Memory allocation failed for packet content.\n");
+            exit(1);
+        }
+        memcpy(packet.content, buffer + HEADER_LENGTH, packet.content_length);
     }
+    return packet;
 }
 
-/* Reads first 4 bytes as int value of index of current packet
- * @param buffer  = char array of incomming data (last char must be '\0')
- * return index of current packet
- */
-int getId(char* buffer){
-    int id =0;
-    id = ((unsigned char)buffer[0] | (unsigned char)buffer[1] << 8 | (unsigned char)buffer[2] << 16 | (unsigned char)buffer[3] << 24);
-    printf("message id: %d\n", id);
-    return id;
+int checkCRC(Packet packet) {
+    int computed_crc = crc_32(packet.content, packet.content_length);
+    return computed_crc != packet.crc;
 }
 
-/* Reads second 4 bytes as int value of lenght of incomming data
- * @param buffer  = char array of incomming data (last char must be '\0')
- * return file length
- */
-int getLength(char* buffer){
-    int length = 0;
-    length = ((unsigned char)buffer[4] | (unsigned char)buffer[5] << 8 | (unsigned char)buffer[6] << 16 | (unsigned char)buffer[7] << 24);
-    return length;
+void toFile(FILE* out, char* buffer, int bytesReceived) {
+    fwrite(buffer, sizeof(char), bytesReceived, out);
 }
 
-/* Reads file name from packet
- * @param buffer         = char array of incomming data (last char must be '\0')
- * @param bytesReceived  = number of bytes received
- * return name of file
- */
-char* getFileName(char* buffer, int bytesReceived){
-    char* fileName = malloc(bytesReceived-8);
-    if (fileName == NULL){
-        return NULL;
-    }
-
-    int i;
-    for (i = 8; i < bytesReceived && buffer[i] != '\0'; i++){
-        fileName[i-8] = buffer[i]; 
-    }
-    fileName[i-8] = '\0';
-    return fileName;
+void sendConfirmation(SOCKET socketHandle, struct sockaddr_in* senderAddress, int id) {
+    sendto(socketHandle, (char*)&id, sizeof(id), 0, (struct sockaddr*)senderAddress, sizeof(*senderAddress));
 }

@@ -2,17 +2,24 @@
 #include <stdlib.h>
 #include <string.h>
 #include <winsock2.h>
-#include <unistd.h>
+#include "../checksum.h"
 
 #pragma comment(lib, "ws2_32.lib")
 
-#define TARGET_PORT 5200
-#define TARGET_IP "192.168.193.100"
+#define TARGET_PORT 5555
+#define TARGET_IP "127.0.0.1"
 
 #define BUFF_SIZE 1024
 #define DFRAME_SIZE 1020
-#define HEADER_LENGTH 4
+#define CRC_LEN_BYTES 32 / 8
+#define HEADER_LENGTH 4 + CRC_LEN_BYTES
+#define TIMEOUT_MS 5000
+#define RESEND_TRIES 3
 
+// PACKET FORMAT: (max size: 1024)
+// first packet: [zero(4), file len(4), crc(CRC_LEN_BYTES), file name(-)]
+// mid packet:   [file index(4), crc(CRC_LEN_BYTES), content(-)]
+// last packet:  [...]
 
 typedef struct {
     WSADATA wsa_data;
@@ -24,6 +31,8 @@ typedef struct {
 int sock_send(SockWrapper* s_wrapper, char* message, int message_length);
 int gen_next_packet(FILE* file, char* result);
 int init_socket(SockWrapper* sock_wrapper);
+int send_file(SockWrapper s_wrapper, FILE* input_file, char* filename);
+int try_sock_receive(SockWrapper* s_wrapper, int file_index);
 
 int main(int argc, char** argv) {
     SockWrapper s_wrapper;
@@ -33,38 +42,61 @@ int main(int argc, char** argv) {
     if (input_file == NULL){ printf("couldn't open file at location %s", argv[1]);
         return 1;
     }
-    fseek(input_file, 0L, SEEK_END);
-    int file_len = ftell(input_file);
-    fseek(input_file, 0L, SEEK_SET);
-
-    char message[BUFF_SIZE] = {0};
-    int message_length = HEADER_LENGTH + 4 + strlen(argv[1]);
-    //first_packet
-    memcpy(message + 4, &file_len, sizeof(int));
-    memcpy(message + 8, argv[1], strlen(argv[1]) + 1);
-    if (sock_send(&s_wrapper, message, message_length)) return 1;
-    printf("%d \n", ((int*)message)[1]);
-
-    int file_index = 1;
-    while (1){
-        memcpy(message, &file_index, sizeof(int));
-        message_length = gen_next_packet(input_file, &message[4]) + HEADER_LENGTH;
-        if (message_length == HEADER_LENGTH)
-            break;
-
-        // Send the message
-        if(sock_send(&s_wrapper, message, message_length)) return 1;
-
-        usleep(30000);
-        printf("%d\n", ((int*)message)[0]);
-        file_index++;
+    if (send_file(s_wrapper, input_file, argv[1]) != 0){
+        return 1;
     }
-
 
     // Cleanup
     closesocket(s_wrapper.socket_handle);
     WSACleanup();
     fclose(input_file);
+    return 0;
+}
+
+int send_file(SockWrapper s_wrapper, FILE* input_file, char* filename){
+    fseek(input_file, 0L, SEEK_END);
+    int file_len = ftell(input_file);
+    fseek(input_file, 0L, SEEK_SET);
+
+    char message[BUFF_SIZE] = {0};
+    int message_length = HEADER_LENGTH + 4 + strlen(filename);
+    int resend_tries = RESEND_TRIES;
+    //first_packet
+    memcpy(message + 4, &file_len, sizeof(int));
+    memcpy(message + 8, filename, strlen(filename) + 1);
+    if (sock_send(&s_wrapper, message, message_length)) return 1;
+
+    while (resend_tries != 0){
+        if (try_sock_receive(&s_wrapper, 0) == 0) break;
+        resend_tries--;
+    }
+
+    //debug
+    printf("%d ", message[4]);
+    printf("%s\n", &message[8]);
+    //dbgug
+
+    int file_index = 1;
+    while (1){
+        memcpy(message, &file_index, sizeof(int));
+        message_length = gen_next_packet(input_file, message) + HEADER_LENGTH;
+        if (message_length == HEADER_LENGTH)
+            break;
+
+        // Send the message
+        if(sock_send(&s_wrapper, message, message_length)) return 1;
+        resend_tries = RESEND_TRIES;
+        while (resend_tries != 0){
+            if (try_sock_receive(&s_wrapper, 0) == 0) break;
+            resend_tries--;
+        }
+
+        //debug
+        printf("%d ", message[0]);
+        printf("%s\n", &message[4]);
+        //dbug
+        file_index++;
+    }
     return 0;
 }
 
@@ -79,12 +111,38 @@ int sock_send(SockWrapper* s_wrapper, char* message, int message_length) {
     return 0;
 }
 
+int try_sock_receive(SockWrapper* s_wrapper, int file_index){
+    int buffer[BUFF_SIZE / sizeof(int)] = {0};
+    struct sockaddr sender_address;
+    int sender_addr_len = sizeof(sender_address);
+    int bytes_received = recvfrom(s_wrapper->socket_handle, (char*)buffer, sizeof(buffer), 0,
+                                  (struct sockaddr*)&sender_address, &sender_addr_len);
+    if (bytes_received == SOCKET_ERROR || bytes_received == 0) {
+//        if (WSAGetLastError() == WSAETIMEDOUT) goto check_correctness;
+        printf("recvfrom() failed. Error: %d\n", WSAGetLastError());
+        closesocket(s_wrapper->socket_handle);
+        WSACleanup();
+        return 1;
+    }
+    int crc = crc_32(buffer, 4);
+    if (buffer[0] != file_index || crc != buffer[1])
+        return 1;
+
+    return 0;
+}
 
 /* Returns the number of bytes read, -1 on error. Fills the result array with the next DFRAME_SIZE bytes of the file
- * specified.*/
+ * specified. The array starts with the CRC code for all data that follows.*/
 int gen_next_packet(FILE* file, char* result){
-    return fread(result, 1, DFRAME_SIZE, file);
+    int bytes_read = fread(&(result[HEADER_LENGTH]), 1, DFRAME_SIZE - HEADER_LENGTH, file);
+    int crc = crc_32(&(result[HEADER_LENGTH]), bytes_read);
+    for (int i = 0; i < 4; i++){
+        update_crc_32(crc, result[i]);
+    }
+    memcpy(&result[4], &crc, CRC_LEN_BYTES);
+    return bytes_read;
 }
+
 
 int init_socket(SockWrapper* sock_wrapper){
     WSADATA wsa_data;
@@ -103,6 +161,14 @@ int init_socket(SockWrapper* sock_wrapper){
         WSACleanup();
         return 1;
     }
+    DWORD timeout = TIMEOUT_MS;
+    if (setsockopt(socket_handle, SOL_SOCKET, SO_RCVTIMEO,
+                   (const char*)&timeout, sizeof(timeout)) == SOCKET_ERROR) {
+        printf("setsockopt failed. Error: %d\n", WSAGetLastError());
+        closesocket(socket_handle);
+        WSACleanup();
+        return 1;
+    }
 
     // Setup target address structure
     target_address.sin_family = AF_INET;
@@ -115,5 +181,3 @@ int init_socket(SockWrapper* sock_wrapper){
 
     return 0;
 }
-
-
