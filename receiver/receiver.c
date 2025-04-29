@@ -136,27 +136,6 @@ Packet parsePacket(char* buffer, int bytesReceived) {
     if (!packet.content) {
         printf("Memory allocation failed for packet content.\n");
         exit(1);
-=======
-    if (packet.id == 0) {
-        // First packet: Content includes file length and filename
-        packet.content_length -= 4;
-        packet.crc = *((int*)(buffer + 8));
-        packet.content = malloc(packet.content_length);
-        if (!packet.content) {
-            printf("Memory allocation failed for first packet content.\n");
-            exit(1);
-        }
-        memcpy(packet.content, buffer + HEADER_LENGTH + 4, packet.content_length);
-    } else {
-        // Subsequent packets: Content includes file data
-        packet.crc = *((int*)(buffer + 4));
-        packet.content = malloc(packet.content_length);
-        if (!packet.content) {
-            printf("Memory allocation failed for packet content.\n");
-            exit(1);
-        }
-        memcpy(packet.content, buffer + HEADER_LENGTH, packet.content_length);
->>>>>>> f49cd317438fd972d70e9f9434432a9b9ffadbe6
     }
     memcpy(packet.content, buffer + HEADER_LENGTH, packet.content_length);
     return packet;
