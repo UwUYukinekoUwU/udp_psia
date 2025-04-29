@@ -7,7 +7,6 @@
 #pragma comment(lib, "ws2_32.lib")
 
 #define TARGET_PORT 5200
-#define TARGET_IP "192.168.193.100"
 
 #define BUFF_SIZE 1024
 #define DFRAME_SIZE 1020
@@ -23,11 +22,11 @@ typedef struct {
 
 int sock_send(SockWrapper* s_wrapper, char* message, int message_length);
 int gen_next_packet(FILE* file, char* result);
-int init_socket(SockWrapper* sock_wrapper);
+int init_socket(SockWrapper* sock_wrapper, char* target_ip);
 
 int main(int argc, char** argv) {
     SockWrapper s_wrapper;
-    if (init_socket(&s_wrapper) != 0) return 1;
+    if (init_socket(&s_wrapper, argv[2]) != 0) return 1;
 
     FILE* input_file = fopen(argv[1], "rb");
     if (input_file == NULL){ printf("couldn't open file at location %s", argv[1]);
@@ -86,7 +85,7 @@ int gen_next_packet(FILE* file, char* result){
     return fread(result, 1, DFRAME_SIZE, file);
 }
 
-int init_socket(SockWrapper* sock_wrapper){
+int init_socket(SockWrapper* sock_wrapper, char* target_ip){
     WSADATA wsa_data;
     SOCKET socket_handle;
     struct sockaddr_in target_address;
@@ -107,7 +106,7 @@ int init_socket(SockWrapper* sock_wrapper){
     // Setup target address structure
     target_address.sin_family = AF_INET;
     target_address.sin_port = htons(TARGET_PORT);
-    target_address.sin_addr.s_addr = inet_addr(TARGET_IP);
+    target_address.sin_addr.s_addr = inet_addr(target_ip);
 
     sock_wrapper->wsa_data = wsa_data;
     sock_wrapper->socket_handle = socket_handle;
