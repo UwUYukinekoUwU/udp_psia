@@ -33,7 +33,7 @@ int gen_next_packet(FILE* file, char* result);
 int init_socket(SockWrapper* sock_wrapper, char* target_ip);
 int send_file(SockWrapper s_wrapper, FILE* input_file, char* filename);
 int try_sock_receive(SockWrapper* s_wrapper, int file_index);
-int send_first_packet(SockWrapper s_wrapper, char* filename, char* message, int message_length);
+int send_first_packet(SockWrapper s_wrapper, char* filename, char* message);
 int resend_cycle(SockWrapper s_wrapper, char* message, int message_length, int file_index);
 
 int main(int argc, char** argv) {
@@ -57,15 +57,14 @@ int main(int argc, char** argv) {
 
 int send_file(SockWrapper s_wrapper, FILE* input_file, char* filename){
     char message[BUFF_SIZE] = {0};
-    int message_length = HEADER_LENGTH /*+ 4*/ + strlen(filename);
 
-    if (send_first_packet(s_wrapper, filename, message, message_length))
+    if (send_first_packet(s_wrapper, filename, message))
         return 1;
 
     int file_index = 1;
     while (1){
         memcpy(message, &file_index, sizeof(int));
-        message_length = gen_next_packet(input_file, message) + HEADER_LENGTH;
+        int message_length = gen_next_packet(input_file, message) + HEADER_LENGTH;
         if (message_length == HEADER_LENGTH)
             break;
 
@@ -123,11 +122,12 @@ int gen_next_packet(FILE* file, char* result){
     return bytes_read;
 }
 
-int send_first_packet(SockWrapper s_wrapper, char* filename, char* message, int message_length){
+int send_first_packet(SockWrapper s_wrapper, char* filename, char* message){
 //    fseek(input_file, 0L, SEEK_END);
 //    int file_len = ftell(input_file);
 //    fseek(input_file, 0L, SEEK_SET);
 //    memcpy(message + 4, &file_len, sizeof(int));
+    int message_length = HEADER_LENGTH /*+ 4*/ + strlen(filename);
     int crc = crc_32(filename, strlen(filename));
     for (int i = 0; i < 4; i++) {
         crc = update_crc_32(crc, message[i]);
