@@ -17,7 +17,7 @@
 #define RESEND_TRIES 3
 
 // PACKET FORMAT: (max size: 1024)
-// first packet: [zero(4), file len(4), crc(CRC_LEN_BYTES), file name(-)]
+// first packet: [zero(4), crc(CRC_LEN_BYTES), file name(-)]
 // mid packet:   [file index(4), crc(CRC_LEN_BYTES), content(-)]
 // last packet:  [...]
 
@@ -33,6 +33,8 @@ int gen_next_packet(FILE* file, char* result);
 int init_socket(SockWrapper* sock_wrapper, char* target_ip);
 int send_file(SockWrapper s_wrapper, FILE* input_file, char* filename);
 int try_sock_receive(SockWrapper* s_wrapper, int file_index);
+int send_first_packet(SockWrapper s_wrapper, FILE* input_file, char* filename, char* message, int message_length);
+int resend_cycle(SockWrapper s_wrapper, char* message, int message_length, int file_index);
 
 int main(int argc, char** argv) {
     SockWrapper s_wrapper;
@@ -54,32 +56,11 @@ int main(int argc, char** argv) {
 }
 
 int send_file(SockWrapper s_wrapper, FILE* input_file, char* filename){
-//    fseek(input_file, 0L, SEEK_END);
-//    int file_len = ftell(input_file);
-//    fseek(input_file, 0L, SEEK_SET);
-
     char message[BUFF_SIZE] = {0};
     int message_length = HEADER_LENGTH /*+ 4*/ + strlen(filename);
-    int resend_tries = RESEND_TRIES;
-    //first_packet
-//    memcpy(message + 4, &file_len, sizeof(int));
 
-    int crc = crc_32(filename, strlen(filename));
-    for (int i = 0; i < 4; i++) {
-        crc = update_crc_32(crc, message[i]);
-    }
-    memcpy(message + 4, &crc, CRC_LEN_BYTES);
-    memcpy(message + 8, filename, strlen(filename) + 1);
-    if (sock_send(&s_wrapper, message, message_length)) return 1;
-
-    while (resend_tries != 0){
-        if (try_sock_receive(&s_wrapper, 0) == 0) break;
-        resend_tries--;
-    }
-
-    //debug
-    printf("%d ", message[4]);
-    //dbgug
+    if (send_first_packet(s_wrapper, input_file, filename, message, message_length))
+        return 1;
 
     int file_index = 1;
     while (1){
@@ -90,11 +71,7 @@ int send_file(SockWrapper s_wrapper, FILE* input_file, char* filename){
 
         // Send the message
         if(sock_send(&s_wrapper, message, message_length)) return 1;
-        resend_tries = RESEND_TRIES;
-        while (resend_tries != 0){
-            if (try_sock_receive(&s_wrapper, 0) == 0) break;
-            resend_tries--;
-        }
+        if(resend_cycle(s_wrapper, message, message_length, file_index)) return 1;
 
         usleep(50000);
         printf("%d\n", ((int*)message)[0]);
@@ -121,7 +98,7 @@ int try_sock_receive(SockWrapper* s_wrapper, int file_index){
     int bytes_received = recvfrom(s_wrapper->socket_handle, (char*)buffer, sizeof(buffer), 0,
                                   (struct sockaddr*)&sender_address, &sender_addr_len);
     if (bytes_received == SOCKET_ERROR || bytes_received == 0) {
-//        if (WSAGetLastError() == WSAETIMEDOUT) goto check_correctness;
+        if (WSAGetLastError() == WSAETIMEDOUT) return 2;
         printf("recvfrom() failed. Error: %d\n", WSAGetLastError());
         closesocket(s_wrapper->socket_handle);
         WSACleanup();
@@ -146,6 +123,36 @@ int gen_next_packet(FILE* file, char* result){
     return bytes_read;
 }
 
+int send_first_packet(SockWrapper s_wrapper, FILE* input_file, char* filename, char* message, int message_length){
+//    fseek(input_file, 0L, SEEK_END);
+//    int file_len = ftell(input_file);
+//    fseek(input_file, 0L, SEEK_SET);
+//    memcpy(message + 4, &file_len, sizeof(int));
+    int crc = crc_32(filename, strlen(filename));
+    for (int i = 0; i < 4; i++) {
+        crc = update_crc_32(crc, message[i]);
+    }
+    memcpy(message + 4, &crc, CRC_LEN_BYTES);
+    memcpy(message + 8, filename, strlen(filename) + 1);
+    if (sock_send(&s_wrapper, message, message_length)) return 1;
+
+    if(resend_cycle(s_wrapper, message, message_length, 0)) return 1;
+    printf("%d \n", message[4]);
+    return 0;
+}
+
+int resend_cycle(SockWrapper s_wrapper, char* message, int message_length, int file_index){
+    int resend_tries = RESEND_TRIES;
+    int success = 0;
+    while ((--resend_tries) != 0){
+        int result;
+        if ((result = try_sock_receive(&s_wrapper, file_index)) == 0) { success = 1; break; }
+        if (result == 2) {printf("Error: Socket timeout\n"); return 1; }
+        if (sock_send(&s_wrapper, message, message_length)) return 1;
+    }
+    if (!success) return 1;
+    return 0;
+}
 
 int init_socket(SockWrapper* sock_wrapper, char* target_ip){
     WSADATA wsa_data;
