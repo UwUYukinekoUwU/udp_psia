@@ -54,15 +54,15 @@ int main(int argc, char** argv) {
 }
 
 int send_file(SockWrapper s_wrapper, FILE* input_file, char* filename){
-    fseek(input_file, 0L, SEEK_END);
-    int file_len = ftell(input_file);
-    fseek(input_file, 0L, SEEK_SET);
+//    fseek(input_file, 0L, SEEK_END);
+//    int file_len = ftell(input_file);
+//    fseek(input_file, 0L, SEEK_SET);
 
     char message[BUFF_SIZE] = {0};
-    int message_length = HEADER_LENGTH + 4 + strlen(filename);
+    int message_length = HEADER_LENGTH /*+ 4*/ + strlen(filename);
     int resend_tries = RESEND_TRIES;
     //first_packet
-    memcpy(message + 4, &file_len, sizeof(int));
+//    memcpy(message + 4, &file_len, sizeof(int));
 
     int crc = crc_32(filename, strlen(filename));
     for (int i = 0; i < strlen(filename); i++){
@@ -71,8 +71,8 @@ int send_file(SockWrapper s_wrapper, FILE* input_file, char* filename){
     for (int i = 0; i < 4; i++) {
         update_crc_32(crc, message[i]);
     }
-    memcpy(message + 8, &crc, CRC_LEN_BYTES);
-    memcpy(message + 12, filename, strlen(filename) + 1);
+    memcpy(message + 4, &crc, CRC_LEN_BYTES);
+    memcpy(message + 8, filename, strlen(filename) + 1);
     if (sock_send(&s_wrapper, message, message_length)) return 1;
 
     while (resend_tries != 0){

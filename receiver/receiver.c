@@ -132,13 +132,14 @@ Packet parsePacket(char* buffer, int bytesReceived) {
     packet.content_length = bytesReceived - HEADER_LENGTH;
     if (packet.id == 0) {
         // First packet: Content includes file length and filename
+        packet.content_length -= 4;
         packet.crc = *((int*)(buffer + 8));
         packet.content = malloc(packet.content_length);
         if (!packet.content) {
             printf("Memory allocation failed for first packet content.\n");
             exit(1);
         }
-        memcpy(packet.content, buffer + HEADER_LENGTH, packet.content_length);
+        memcpy(packet.content, buffer + HEADER_LENGTH + 4, packet.content_length);
     } else {
         // Subsequent packets: Content includes file data
         packet.crc = *((int*)(buffer + 4));
