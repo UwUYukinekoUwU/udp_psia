@@ -13,7 +13,7 @@
 #define DFRAME_SIZE 1020
 #define CRC_LEN_BYTES 32 / 8
 #define HEADER_LENGTH 4 + CRC_LEN_BYTES
-#define TIMEOUT_MS 5000
+#define TIMEOUT_MS 10000
 #define RESEND_TRIES 3
 
 // PACKET FORMAT: (max size: 1024)
