@@ -54,7 +54,7 @@ int main(int argc, char** argv) {
         // Send the message
         if(sock_send(&s_wrapper, message, message_length)) return 1;
 
-        usleep(30000);
+        usleep(50000);
         printf("%d\n", ((int*)message)[0]);
         file_index++;
     }
