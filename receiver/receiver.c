@@ -130,30 +130,22 @@ Packet parsePacket(char* buffer, int bytesReceived) {
     packet.id = *((int*)buffer);
     
     packet.content_length = bytesReceived - HEADER_LENGTH;
-    if (packet.id == 0) {
-        // First packet: Content includes file length and filename
-        packet.crc = *((int*)(buffer + 8));
-        packet.content = malloc(packet.content_length);
-        if (!packet.content) {
-            printf("Memory allocation failed for first packet content.\n");
-            exit(1);
-        }
-        memcpy(packet.content, buffer + HEADER_LENGTH, packet.content_length);
-    } else {
-        // Subsequent packets: Content includes file data
-        packet.crc = *((int*)(buffer + 4));
-        packet.content = malloc(packet.content_length);
-        if (!packet.content) {
-            printf("Memory allocation failed for packet content.\n");
-            exit(1);
-        }
-        memcpy(packet.content, buffer + HEADER_LENGTH, packet.content_length);
+    // Subsequent packets: Content includes file data
+    packet.crc = *((int*)(buffer + 4));
+    packet.content = malloc(packet.content_length);
+    if (!packet.content) {
+        printf("Memory allocation failed for packet content.\n");
+        exit(1);
     }
+    memcpy(packet.content, buffer + HEADER_LENGTH, packet.content_length);
     return packet;
 }
 
 int checkCRC(Packet packet) {
     int computed_crc = crc_32(packet.content, packet.content_length);
+    for (int i = 0; i < 4; i++){
+        update_crc_32(computed_crc, packet.id >> (i * 8));
+    }
     return computed_crc != packet.crc;
 }
 
