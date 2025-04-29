@@ -10,6 +10,7 @@
 #define CRC_LEN_BYTES 32 / 8
 #define HEADER_LENGTH 4 + CRC_LEN_BYTES
 #define BUFFER_SIZE 1024
+#define CONFIRMATION_SIZE 8
 
 typedef struct {
     int id;
@@ -68,6 +69,8 @@ int main() {
             printf("recvfrom() failed. Error: %d\n", WSAGetLastError());
             break;
         }
+
+        printf("received");
 
         Packet packet = parsePacket(buffer, bytesReceived);
 
@@ -159,5 +162,11 @@ void toFile(FILE* out, char* buffer, int bytesReceived) {
 }
 
 void sendConfirmation(SOCKET socketHandle, struct sockaddr_in* senderAddress, int id) {
-    sendto(socketHandle, (char*)&id, sizeof(id), 0, (struct sockaddr*)senderAddress, sizeof(*senderAddress));
+
+    char confirmation[CONFIRMATION_SIZE] = {0};
+    memcpy(confirmation, &id, sizeof(id));
+    int crc = crc_32(confirmation, CONFIRMATION_SIZE);
+    memcpy(confirmation + sizeof(id), &crc, sizeof(crc));
+
+    sendto(socketHandle, confirmation, CONFIRMATION_SIZE, 0, (struct sockaddr*)senderAddress, sizeof(*senderAddress));
 }
