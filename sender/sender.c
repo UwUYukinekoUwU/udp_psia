@@ -63,7 +63,16 @@ int send_file(SockWrapper s_wrapper, FILE* input_file, char* filename){
     int resend_tries = RESEND_TRIES;
     //first_packet
     memcpy(message + 4, &file_len, sizeof(int));
-    memcpy(message + 8, filename, strlen(filename) + 1);
+
+    int crc = crc_32(filename, strlen(filename));
+    for (int i = 0; i < strlen(filename); i++){
+        update_crc_32(crc, filename[i]);
+    }
+    for (int i = 0; i < 4; i++) {
+        update_crc_32(crc, message[i]);
+    }
+    memcpy(message + 8, &crc, CRC_LEN_BYTES);
+    memcpy(message + 12, filename, strlen(filename) + 1);
     if (sock_send(&s_wrapper, message, message_length)) return 1;
 
     while (resend_tries != 0){
@@ -73,7 +82,6 @@ int send_file(SockWrapper s_wrapper, FILE* input_file, char* filename){
 
     //debug
     printf("%d ", message[4]);
-    printf("%s\n", &message[8]);
     //dbgug
 
     int file_index = 1;
@@ -122,8 +130,8 @@ int try_sock_receive(SockWrapper* s_wrapper, int file_index){
         WSACleanup();
         return 1;
     }
-    int crc = crc_32(buffer, 4);
-    if (buffer[0] != file_index || crc != buffer[1])
+    int crc = crc_32((char*)buffer, 4);
+    if (buffer[0] != file_index /*|| crc != buffer[1]*/)
         return 1;
 
     return 0;
@@ -132,8 +140,8 @@ int try_sock_receive(SockWrapper* s_wrapper, int file_index){
 /* Returns the number of bytes read, -1 on error. Fills the result array with the next DFRAME_SIZE bytes of the file
  * specified. The array starts with the CRC code for all data that follows.*/
 int gen_next_packet(FILE* file, char* result){
-    int bytes_read = fread(&(result[HEADER_LENGTH]), 1, DFRAME_SIZE - HEADER_LENGTH, file);
-    int crc = crc_32(&(result[HEADER_LENGTH]), bytes_read);
+    int bytes_read = fread(&result[HEADER_LENGTH], 1, DFRAME_SIZE - HEADER_LENGTH, file);
+    int crc = crc_32(&result[HEADER_LENGTH], bytes_read);
     for (int i = 0; i < 4; i++){
         update_crc_32(crc, result[i]);
     }
