@@ -65,11 +65,8 @@ int send_file(SockWrapper s_wrapper, FILE* input_file, char* filename){
 //    memcpy(message + 4, &file_len, sizeof(int));
 
     int crc = crc_32(filename, strlen(filename));
-    for (int i = 0; i < strlen(filename); i++){
-        update_crc_32(crc, filename[i]);
-    }
     for (int i = 0; i < 4; i++) {
-        update_crc_32(crc, message[i]);
+        crc = update_crc_32(crc, message[i]);
     }
     memcpy(message + 4, &crc, CRC_LEN_BYTES);
     memcpy(message + 8, filename, strlen(filename) + 1);
@@ -143,7 +140,7 @@ int gen_next_packet(FILE* file, char* result){
     int bytes_read = fread(&result[HEADER_LENGTH], 1, DFRAME_SIZE - HEADER_LENGTH, file);
     int crc = crc_32(&result[HEADER_LENGTH], bytes_read);
     for (int i = 0; i < 4; i++){
-        update_crc_32(crc, result[i]);
+        crc = update_crc_32(crc, result[i]);
     }
     memcpy(&result[4], &crc, CRC_LEN_BYTES);
     return bytes_read;

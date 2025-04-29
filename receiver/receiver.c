@@ -144,7 +144,7 @@ Packet parsePacket(char* buffer, int bytesReceived) {
 int checkCRC(Packet packet) {
     int computed_crc = crc_32(packet.content, packet.content_length);
     for (int i = 0; i < 4; i++){
-        update_crc_32(computed_crc, packet.id >> (i * 8));
+        computed_crc = update_crc_32(computed_crc, packet.id >> (i * 8));
     }
     return computed_crc != packet.crc;
 }
