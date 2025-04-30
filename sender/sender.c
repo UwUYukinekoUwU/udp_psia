@@ -137,7 +137,7 @@ int send_first_packet(SockWrapper s_wrapper, char* filename, char* message){
     if (sock_send(&s_wrapper, message, message_length)) return 1;
 
     if(resend_cycle(s_wrapper, message, message_length, 0)) return 1;
-    printf("%d \n", message[4]);
+    printf("%d \n", message[0]);
     return 0;
 }
 
