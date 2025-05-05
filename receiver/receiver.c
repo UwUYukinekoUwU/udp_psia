@@ -8,8 +8,8 @@
 #pragma comment(lib, "ws2_32.lib")
 
 #define PORT 5200
-#define CRC_LEN_BYTES 32 / 8
-#define HEADER_LENGTH 4 + CRC_LEN_BYTES
+#define CRC_LEN_BYTES (32 / 8)
+#define HEADER_LENGTH (4 + CRC_LEN_BYTES)
 #define BUFFER_SIZE 1024
 #define CONFIRMATION_SIZE 8
 
@@ -83,7 +83,7 @@ int main() {
                 sendConfirmation(socketHandle, &senderAddress, lastConfirmed);
 
                 file_len = *((int*)(packet.content));
-                char* filename = packet.content + sizeof(int);
+                char* filename = packet.content;
 
                 file = fopen(filename, "wb");
                 if (!file) {

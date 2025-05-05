@@ -4,6 +4,7 @@
 #include <winsock2.h>
 #include <unistd.h>
 #include "../checksum.h"
+#include "../hash/sha1.h"
 
 #pragma comment(lib, "ws2_32.lib")
 
@@ -11,15 +12,15 @@
 
 #define BUFF_SIZE 1024
 #define DFRAME_SIZE 1020
-#define CRC_LEN_BYTES 32 / 8
-#define HEADER_LENGTH 4 + CRC_LEN_BYTES
+#define CRC_LEN_BYTES (32 / 8)
+#define HEADER_LENGTH (4 + CRC_LEN_BYTES)
 #define TIMEOUT_MS 10000
 #define RESEND_TRIES 3
 
 // PACKET FORMAT: (max size: 1024)
 // first packet: [zero(4), crc(CRC_LEN_BYTES), file name(-)]
 // mid packet:   [file index(4), crc(CRC_LEN_BYTES), content(-)]
-// last packet:  [...]
+// last packet:  [-2(4), crc(CRC_LEN_BYTES), hash(8)] ??? idfk 0 is taken
 
 typedef struct {
     WSADATA wsa_data;
@@ -34,7 +35,9 @@ int init_socket(SockWrapper* sock_wrapper, char* target_ip);
 int send_file(SockWrapper s_wrapper, FILE* input_file, char* filename);
 int try_sock_receive(SockWrapper* s_wrapper, int file_index);
 int send_first_packet(SockWrapper s_wrapper, char* filename, char* message);
+int send_last_packet(SockWrapper s_wrapper, FILE* file, char* message);
 int resend_cycle(SockWrapper s_wrapper, char* message, int message_length, int file_index);
+int gen_hash(FILE* file, uint8_t* hash_to_fill);
 
 int main(int argc, char** argv) {
     SockWrapper s_wrapper;
@@ -76,6 +79,10 @@ int send_file(SockWrapper s_wrapper, FILE* input_file, char* filename){
         printf("%d\n", ((int*)message)[0]);
         file_index++;
     }
+
+    if (send_last_packet(s_wrapper, input_file, message))
+        return 1;
+
     return 0;
 }
 
@@ -141,6 +148,26 @@ int send_first_packet(SockWrapper s_wrapper, char* filename, char* message){
     return 0;
 }
 
+int send_last_packet(SockWrapper s_wrapper, FILE* file, char* message){
+    int last = -2;
+    int message_length = HEADER_LENGTH /*+ 4*/ + sizeof(uint8_t);
+    uint8_t hash = 0;
+    gen_hash(file, &hash);
+    int crc = crc_32(&hash, sizeof(uint8_t));
+    for (int i = 0; i < 4; i++) {
+        crc = update_crc_32(crc, message[i]);
+    }
+
+    memcpy(message, &last, sizeof(int));
+    memcpy(message + 4, &crc, CRC_LEN_BYTES);
+    memcpy(message + 8, &hash, sizeof(uint8_t));
+    if (sock_send(&s_wrapper, message, message_length)) return 1;
+
+    if(resend_cycle(s_wrapper, message, message_length, 0)) return 1;
+    printf("%d \n", message[0]);
+    return 0;
+}
+
 int resend_cycle(SockWrapper s_wrapper, char* message, int message_length, int file_index){
     int resend_tries = RESEND_TRIES;
     int success = 0;
@@ -151,6 +178,38 @@ int resend_cycle(SockWrapper s_wrapper, char* message, int message_length, int f
         if (sock_send(&s_wrapper, message, message_length)) return 1;
     }
     if (!success) return 1;
+    return 0;
+}
+
+
+int gen_hash(FILE* file, uint8_t* hash_to_fill) {
+    rewind(file);
+    fseek(file, 0, SEEK_END);
+    long filesize = ftell(file);
+    rewind(file);
+
+    char* buffer = malloc(filesize);
+    if (!buffer) {
+        printf("Memory allocation failed for file buffer.\n");
+        return 1;
+    }
+    fread(buffer, 1, filesize, file);
+
+    SHA1_CTX sha1;
+    uint8_t results[20];
+    SHA1Init(&sha1);
+    SHA1Update(&sha1, (unsigned char*)buffer, filesize);
+    SHA1Final(results, &sha1);
+
+    printf("SHA-1 Hash: ");
+    for (int i = 0; i < 20; i++) {
+        printf("%02x", results[i]);
+    }
+    printf("\n");
+
+    free(buffer);
+    memcpy(hash_to_fill, results, sizeof(uint8_t));
+
     return 0;
 }
 
