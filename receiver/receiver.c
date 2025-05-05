@@ -3,6 +3,7 @@
 #include <string.h>
 #include <winsock2.h>
 #include "../checksum.h"
+#include "../hash/sha1.h"
 
 #pragma comment(lib, "ws2_32.lib")
 
@@ -23,6 +24,7 @@ void toFile(FILE* out, char* buffer, int bytesReceived);
 Packet parsePacket(char* buffer, int bytesReceived);
 int checkCRC(Packet packet);
 void sendConfirmation(SOCKET socketHandle, struct sockaddr_in* senderAddress, int id);
+int checkHash(char* fileName, uint8_t* receivedHash);
 
 int main() {
     WSADATA wsaData;
@@ -143,8 +145,9 @@ Packet parsePacket(char* buffer, int bytesReceived) {
 
 int checkCRC(Packet packet) {
     int computed_crc = crc_32(packet.content, packet.content_length);
+    unsigned char* id_bytes = (unsigned char*)&packet.id;
     for (int i = 0; i < 4; i++){
-        computed_crc = update_crc_32(computed_crc, packet.id >> (i * 8));
+        computed_crc = update_crc_32(computed_crc, id_bytes[i]);
     }
     return computed_crc != packet.crc;
 }
@@ -161,4 +164,53 @@ void sendConfirmation(SOCKET socketHandle, struct sockaddr_in* senderAddress, in
     memcpy(confirmation + sizeof(id), &crc, sizeof(crc));
 
     sendto(socketHandle, confirmation, CONFIRMATION_SIZE, 0, (struct sockaddr*)senderAddress, sizeof(*senderAddress));
+}
+
+int checkHash(char* fileName, uint8_t* receivedHash) {
+
+    FILE* file = fopen(fileName, "rb");
+    if (!file) {
+        printf("Failed to open file for hashing.\n");
+        return 0;
+    }
+
+    fseek(file, 0, SEEK_END);
+    long filesize = ftell(file);
+    rewind(file);
+
+    char* buffer = malloc(filesize);
+    if (!buffer) {
+        printf("Memory allocation failed for file buffer.\n");
+        fclose(file);
+        return 0;
+    }
+
+    fread(buffer, 1, filesize, file);
+    fclose(file);
+
+    SHA1_CTX sha1;
+    uint8_t results[20];
+    SHA1Init(&sha1);
+    SHA1Update(&sha1, (unsigned char*)buffer, filesize);
+    SHA1Final(results, &sha1);
+
+    printf("SHA-1 Hash: ");
+    for (int i = 0; i < 20; i++) {
+        printf("%02x", results[i]);
+    }
+    printf("\n");
+
+    printf("Received Hash: ");
+    for (int i = 0; i < 20; i++) {
+        printf("%02x", receivedHash[i]);
+    }
+
+    if (memcmp(results, receivedHash, 20) == 0) {
+        printf("Hash match!\n");
+    } else {
+        printf("Hash mismatch!\n");
+    }
+    free(buffer);
+    return memcmp(results, receivedHash, 20) == 0 ? 1 : 0;
+    
 }
