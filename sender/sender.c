@@ -111,7 +111,7 @@ int try_sock_receive(SockWrapper* s_wrapper, int file_index){
         return 1;
     }
     int crc = crc_32((char*)buffer, 4);
-    if (buffer[0] != file_index /*|| crc != buffer[1]*/)
+    if (buffer[0] != file_index || crc != buffer[1])
         return 1;
 
     return 0;
