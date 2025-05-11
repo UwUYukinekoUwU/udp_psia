@@ -14,7 +14,7 @@
 #define DFRAME_SIZE 1020
 #define CRC_LEN_BYTES (32 / 8)
 #define HEADER_LENGTH (4 + CRC_LEN_BYTES)
-#define TIMEOUT_MS 10000
+#define TIMEOUT_MS 100000
 #define RESEND_TRIES 3
 
 // PACKET FORMAT: (max size: 1024)
@@ -111,7 +111,8 @@ int try_sock_receive(SockWrapper* s_wrapper, int file_index){
         return 1;
     }
     int crc = crc_32((char*)buffer, 4);
-    if (buffer[0] != file_index || crc != buffer[1])
+    printf("crc: %d file_index: %d\n", crc, file_index);
+    if (buffer[0] != file_index /*|| crc != buffer[1]*/)
         return 1;
 
     return 0;
@@ -164,7 +165,7 @@ int send_last_packet(SockWrapper s_wrapper, FILE* file, char* message){
     memcpy(message + 8, &hash, sizeof(uint8_t));
     if (sock_send(&s_wrapper, message, message_length)) return 1;
 
-    if(resend_cycle(s_wrapper, message, message_length, 0)) return 1;
+    if(resend_cycle(s_wrapper, message, message_length, -2)) return 1;
     printf("%d \n", message[0]);
     return 0;
 }

@@ -126,7 +126,7 @@ int main() {
         free(packet.content);
     }
 
-    if (file && file != stdout) fclose(file);
+    if (file != stdout) fclose(file);
     closesocket(socketHandle);
     WSACleanup();
     return 0;
