@@ -147,7 +147,7 @@ int send_first_packet(SockWrapper s_wrapper, char* filename, char* message){
 
 int send_last_packet(SockWrapper s_wrapper, FILE* file, char* message){
     int last = -2;
-    int message_length = HEADER_LENGTH /*+ 4*/ + sizeof(uint8_t);
+    int message_length = HEADER_LENGTH + sizeof(uint8_t);
     uint8_t hash = 0;
     gen_hash(file, &hash);
     memcpy(message, &last, sizeof(int));
