@@ -64,7 +64,7 @@ int send_file(SockWrapper s_wrapper, FILE* input_file, char* filename){
     if (send_first_packet(s_wrapper, filename, message))
         return 1;
 
-    int file_index = 2;
+    int file_index = 1;
     while (1){
         memcpy(message, &file_index, sizeof(int));
         int message_length = gen_next_packet(input_file, message) + HEADER_LENGTH;
@@ -143,13 +143,13 @@ int send_first_packet(SockWrapper s_wrapper, char* filename, char* message){
     memcpy(message + 8, filename, strlen(filename) + 1);
     if (sock_send(&s_wrapper, message, message_length)) return 1;
 
-    if(resend_cycle(s_wrapper, message, message_length, 1)) return 1;
+    if(resend_cycle(s_wrapper, message, message_length, 0)) return 1;
     printf("%d \n", message[0]);
     return 0;
 }
 
 int send_last_packet(SockWrapper s_wrapper, FILE* file, char* message){
-    int last = 0;
+    int last = -2;
     int message_length = HEADER_LENGTH /*+ 4*/ + sizeof(uint8_t);
     uint8_t hash = 0;
     gen_hash(file, &hash);
