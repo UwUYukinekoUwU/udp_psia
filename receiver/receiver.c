@@ -8,8 +8,8 @@
 #pragma comment(lib, "ws2_32.lib")
 
 #define PORT 5200
-#define CRC_LEN_BYTES (32 / 8)
-#define HEADER_LENGTH (4 + CRC_LEN_BYTES)
+#define CRC_LEN_BYTES 32 / 8
+#define HEADER_LENGTH 4 + CRC_LEN_BYTES
 #define BUFFER_SIZE 1024
 #define CONFIRMATION_SIZE 8
 
@@ -61,7 +61,7 @@ int main() {
     printf("Listening for UDP messages on port %d...\n", PORT);
 
     FILE* file = NULL;
-    int file_len = 0, received_len = 0, lastConfirmed = -1;
+    int received_len = 0, lastConfirmed = -1;
 
     // Main Loop
     while (1) {
@@ -82,8 +82,8 @@ int main() {
                 lastConfirmed = 0;
                 sendConfirmation(socketHandle, &senderAddress, lastConfirmed);
 
-                file_len = *((int*)(packet.content));
-                char* filename = packet.content;
+                //file_len = *((int*)(packet.content));
+                char* filename = packet.content + sizeof(int);
 
                 file = fopen(filename, "wb");
                 if (!file) {
@@ -105,10 +105,17 @@ int main() {
                 toFile(file, packet.content, packet.content_length);
                 received_len += packet.content_length;
 
-                if (received_len >= file_len) {
+
+                if (packet.id == -2){
                     printf("File transfer complete.\n");
                     break;
                 }
+
+                /*if (received_len >= file_len) {
+                    printf("File transfer complete.\n");
+                    break;
+                }
+                */
             } else {
                 printf("CRC error in packet %d.\n", packet.id);
                 sendConfirmation(socketHandle, &senderAddress, lastConfirmed);
