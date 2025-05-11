@@ -153,12 +153,13 @@ int send_last_packet(SockWrapper s_wrapper, FILE* file, char* message){
     int message_length = HEADER_LENGTH /*+ 4*/ + sizeof(uint8_t);
     uint8_t hash = 0;
     gen_hash(file, &hash);
+    memcpy(message, &last, sizeof(int));
+
     int crc = crc_32(&hash, sizeof(uint8_t));
     for (int i = 0; i < 4; i++) {
         crc = update_crc_32(crc, message[i]);
     }
 
-    memcpy(message, &last, sizeof(int));
     memcpy(message + 4, &crc, CRC_LEN_BYTES);
     memcpy(message + 8, &hash, sizeof(uint8_t));
     if (sock_send(&s_wrapper, message, message_length)) return 1;
