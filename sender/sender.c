@@ -131,11 +131,7 @@ int gen_next_packet(FILE* file, char* result){
 }
 
 int send_first_packet(SockWrapper s_wrapper, char* filename, char* message){
-//    fseek(input_file, 0L, SEEK_END);
-//    int file_len = ftell(input_file);
-//    fseek(input_file, 0L, SEEK_SET);
-//    memcpy(message + 4, &file_len, sizeof(int));
-    int message_length = HEADER_LENGTH /*+ 4*/ + strlen(filename);
+    int message_length = HEADER_LENGTH + strlen(filename);
     int crc = crc_32(filename, strlen(filename));
     for (int i = 0; i < 4; i++) {
         crc = update_crc_32(crc, message[i]);
