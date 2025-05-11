@@ -102,14 +102,12 @@ int main() {
                 lastConfirmed = packet.id;
                 sendConfirmation(socketHandle, &senderAddress, lastConfirmed);
 
-                toFile(file, packet.content, packet.content_length);
-                received_len += packet.content_length;
-
-
                 if (packet.id == -2){
                     printf("File transfer complete.\n");
                     break;
                 }
+                toFile(file, packet.content, packet.content_length);
+                received_len += packet.content_length;
 
                 /*if (received_len >= file_len) {
                     printf("File transfer complete.\n");
