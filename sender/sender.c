@@ -75,7 +75,7 @@ int send_file(SockWrapper s_wrapper, FILE* input_file, char* filename){
         if(sock_send(&s_wrapper, message, message_length)) return 1;
         if(resend_cycle(s_wrapper, message, message_length, file_index)) return 1;
 
-        usleep(5000);
+        usleep(50000);
         printf("%d\n", ((int*)message)[0]);
         file_index++;
     }
