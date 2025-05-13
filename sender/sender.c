@@ -16,6 +16,7 @@
 #define HEADER_LENGTH (4 + CRC_LEN_BYTES)
 #define TIMEOUT_MS 100000
 #define RESEND_TRIES 3
+#define WINDOW_LEN 5
 
 // PACKET FORMAT: (max size: 1024)
 // first packet: [zero(4), crc(CRC_LEN_BYTES), file name(-)]
@@ -28,16 +29,32 @@ typedef struct {
     struct sockaddr_in target_address;
 } SockWrapper;
 
+typedef struct {
+    int file_index;
+    int data_len;
+    char* data;
+} Packet;
+
+
 
 int sock_send(SockWrapper* s_wrapper, char* message, int message_length);
 int gen_next_packet(FILE* file, char* result);
 int init_socket(SockWrapper* sock_wrapper, char* target_ip);
 int send_file(SockWrapper s_wrapper, FILE* input_file, char* filename);
 int try_sock_receive(SockWrapper* s_wrapper, int file_index);
-int send_first_packet(SockWrapper s_wrapper, char* filename, char* message);
-int send_last_packet(SockWrapper s_wrapper, FILE* file, char* message);
+Packet* gen_first_packet( char* filename, char* message);
+Packet* gen_last_packet(FILE* file, char* message);
 int resend_cycle(SockWrapper s_wrapper, char* message, int message_length, int file_index);
 int gen_hash(FILE* file, uint8_t* hash_to_fill);
+Packet* gen_packet_struct(int file_index, char* message, int message_length);
+void free_packet(Packet* p);
+void clean_miss_map();
+
+
+
+Packet* miss_map[WINDOW_LEN] = {0};
+
+
 
 int main(int argc, char** argv) {
     SockWrapper s_wrapper;
@@ -54,17 +71,23 @@ int main(int argc, char** argv) {
     // Cleanup
     closesocket(s_wrapper.socket_handle);
     WSACleanup();
+    clean_miss_map();
     fclose(input_file);
     return 0;
 }
 
 int send_file(SockWrapper s_wrapper, FILE* input_file, char* filename){
     char message[BUFF_SIZE] = {0};
-
-    if (send_first_packet(s_wrapper, filename, message))
-        return 1;
-
     int file_index = 1;
+
+    // if (gen_first_packet(s_wrapper, filename, message))
+    //     return 1;
+    Packet *p = gen_first_packet(s_wrapper, filename, message);
+    if (sock_send(&s_wrapper, p->data, p->data_len)) {
+        free_packet(p);
+        return 1;
+    }
+
     while (1){
         memcpy(message, &file_index, sizeof(int));
         int message_length = gen_next_packet(input_file, message) + HEADER_LENGTH;
@@ -72,7 +95,11 @@ int send_file(SockWrapper s_wrapper, FILE* input_file, char* filename){
             break;
 
         // Send the message
-        if(sock_send(&s_wrapper, message, message_length)) return 1;
+        int new_limit = file_index + WINDOW_LEN;
+        while (file_index < new_limit) {
+            if(sock_send(&s_wrapper, message, message_length)) return 1;
+            file_index++;
+        }
         if(resend_cycle(s_wrapper, message, message_length, file_index)) return 1;
 
         usleep(50000);
@@ -80,8 +107,9 @@ int send_file(SockWrapper s_wrapper, FILE* input_file, char* filename){
         file_index++;
     }
 
-    if (send_last_packet(s_wrapper, input_file, message))
-        return 1;
+    // if (gen_last_packet(s_wrapper, input_file, message))
+    //     return 1;
+    Packet* p = gen_last_packet(-2, input_file, message);
 
     return 0;
 }
@@ -130,7 +158,7 @@ int gen_next_packet(FILE* file, char* result){
     return bytes_read;
 }
 
-int send_first_packet(SockWrapper s_wrapper, char* filename, char* message){
+Packet* gen_first_packet(char* filename, char* message){
     int message_length = HEADER_LENGTH + strlen(filename);
     int crc = crc_32(filename, strlen(filename));
     for (int i = 0; i < 4; i++) {
@@ -138,14 +166,16 @@ int send_first_packet(SockWrapper s_wrapper, char* filename, char* message){
     }
     memcpy(message + 4, &crc, CRC_LEN_BYTES);
     memcpy(message + 8, filename, strlen(filename) + 1);
-    if (sock_send(&s_wrapper, message, message_length)) return 1;
 
-    if(resend_cycle(s_wrapper, message, message_length, 0)) return 1;
+    Packet* p = gen_packet_struct(0, message, message_length);
+    // if (sock_send(&s_wrapper, message, message_length)) return 1;
+
+    // if(resend_cycle(s_wrapper, message, message_length, 0)) return 1;
     printf("%d \n", message[0]);
-    return 0;
+    return p;
 }
 
-int send_last_packet(SockWrapper s_wrapper, FILE* file, char* message){
+Packet* gen_last_packet(FILE* file, char* message){
     int last = -2;
     int message_length = HEADER_LENGTH + sizeof(uint8_t);
     uint8_t hash = 0;
@@ -159,11 +189,14 @@ int send_last_packet(SockWrapper s_wrapper, FILE* file, char* message){
 
     memcpy(message + 4, &crc, CRC_LEN_BYTES);
     memcpy(message + 8, &hash, sizeof(uint8_t));
-    if (sock_send(&s_wrapper, message, message_length)) return 1;
 
-    if(resend_cycle(s_wrapper, message, message_length, -2)) return 1;
+    Packet* p = gen_packet_struct(-2, message, message_length);
+
+    // if (sock_send(&s_wrapper, message, message_length)) return 1;
+
+    // if(resend_cycle(s_wrapper, message, message_length, -2)) return 1;
     printf("%d \n", message[0]);
-    return 0;
+    return p;
 }
 
 int resend_cycle(SockWrapper s_wrapper, char* message, int message_length, int file_index){
@@ -172,13 +205,32 @@ int resend_cycle(SockWrapper s_wrapper, char* message, int message_length, int f
     while ((--resend_tries) != 0){
         int result;
         if ((result = try_sock_receive(&s_wrapper, file_index)) == 0) { success = 1; break; }
-        if (result == 2) {printf("Error: Socket timeout\n"); return 1; }
+        if (result == 2) {printf("Error: Socket timeout\n"); continue; }
         if (sock_send(&s_wrapper, message, message_length)) return 1;
     }
     if (!success) return 1;
     return 0;
 }
 
+/*makes a new copy in memory of the message*/
+Packet* gen_packet_struct(int file_index, char* message, int message_len) {
+    char* copied_message = malloc(sizeof(char) * message_len);
+    memcpy(copied_message, message, message_len * sizeof(char));
+    Packet* p = (Packet*)malloc(sizeof(Packet));
+    *p = (Packet) {
+        .file_index = file_index,
+        .data = copied_message,
+        .data_len = message_len
+    };
+    return p;
+}
+
+void free_packet(Packet* p) {
+    if (p != NULL) {
+        if (p->data != NULL)free(p->data);
+        free(p);
+    }
+}
 
 int gen_hash(FILE* file, uint8_t* hash_to_fill) {
     rewind(file);
@@ -210,6 +262,16 @@ int gen_hash(FILE* file, uint8_t* hash_to_fill) {
 
     return 0;
 }
+
+void clean_miss_map() {
+    for (int i = 0; i < WINDOW_LEN; i++) {
+        if (miss_map[i] != NULL) {
+            free_packet(miss_map[i]);
+            miss_map[i] = NULL;
+        }
+    }
+}
+
 
 int init_socket(SockWrapper* sock_wrapper, char* target_ip){
     WSADATA wsa_data;
