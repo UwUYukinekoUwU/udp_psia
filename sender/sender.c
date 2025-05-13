@@ -16,7 +16,7 @@
 #define HEADER_LENGTH (4 + CRC_LEN_BYTES)
 #define TIMEOUT_MS 100000
 #define RESEND_TRIES 3
-#define WINDOW_LEN 5
+#define WINDOW_LEN 1
 
 // PACKET FORMAT: (max size: 1024)
 // first packet: [zero(4), crc(CRC_LEN_BYTES), file name(-)]
@@ -44,7 +44,6 @@ int send_file(SockWrapper s_wrapper, FILE* input_file);
 int try_sock_receive(SockWrapper* s_wrapper, int* received_index);
 Packet* gen_first_packet(char* message);
 Packet* gen_last_packet(FILE* file, char* message);
-int resend_cycle(SockWrapper s_wrapper, char* message, int message_length, int file_index);
 int gen_hash(FILE* file, uint8_t* hash_to_fill);
 Packet* gen_packet_struct(int file_index, char* message, int message_length);
 int send_batch(SockWrapper* s_wrapper);
@@ -53,7 +52,7 @@ void free_packet(Packet* p);
 void clean_miss_map();
 void null_miss_map(int file_index);
 int miss_map_is_empty();
-
+char* extract_filename(char* whole_path);
 
 
 Packet* miss_map[WINDOW_LEN] = {0};
@@ -64,7 +63,7 @@ int main(int argc, char** argv) {
     SockWrapper s_wrapper;
     if (init_socket(&s_wrapper, argv[2]) != 0) return 1;
 
-    filename = argv[1];
+    filename = extract_filename(argv[1]);
 
     FILE* input_file = fopen(argv[1], "rb");
     if (input_file == NULL){ printf("couldn't open file at location %s", argv[1]);
@@ -78,6 +77,7 @@ int main(int argc, char** argv) {
     closesocket(s_wrapper.socket_handle);
     WSACleanup();
     clean_miss_map();
+    free(filename);
     fclose(input_file);
     return 0;
 }
@@ -96,10 +96,14 @@ int send_file(SockWrapper s_wrapper, FILE* input_file){
             if (miss_map[i - base] != NULL) //this packet send failed
                 continue;
 
+            memcpy(message, &file_index, sizeof(int));
             int message_length = gen_next_packet(input_file, message) + HEADER_LENGTH;
             if (message_length == HEADER_LENGTH){ //last packet
+                int last = -2;
+                memcpy(message, &last, sizeof(int));
                 miss_map[i - base] = gen_last_packet(input_file, message);
                 finished = 1;
+                break;
             }
             else{
                 miss_map[i - base] = gen_packet_struct(file_index, message, message_length);
@@ -136,12 +140,13 @@ int send_batch(SockWrapper* s_wrapper){
 
 void null_miss_map(int file_index){
     int miss_map_size = sizeof(miss_map) / sizeof(Packet*);
-    if (file_index < 0 || file_index >= miss_map_size) return;
 
     for(int i = 0; i < miss_map_size; i++){
+        if (miss_map[i] == NULL) continue;
         if (miss_map[i]->file_index == file_index){
             free_packet(miss_map[i]);
             miss_map[i] = NULL;
+            break;
         }
     }
 }
@@ -150,6 +155,7 @@ int await_window_confirm(SockWrapper* s_wrapper){
     int received_index = 0;
     int listen_result;
     for(int i = 0; i < WINDOW_LEN; i++){
+        if (miss_map_is_empty()) return 0;
         listen_result = try_sock_receive(s_wrapper, &received_index);
         if (listen_result == 1) return 1;
         if (listen_result == 2) break;
@@ -160,7 +166,6 @@ int await_window_confirm(SockWrapper* s_wrapper){
 
 
 int sock_send(SockWrapper* s_wrapper, Packet* packet) {
-    memcpy(packet->data, &(packet->file_index), sizeof(int));
     if (sendto(s_wrapper->socket_handle, packet->data, packet->data_len, 0,
              (struct sockaddr*)&(s_wrapper->target_address), sizeof(s_wrapper->target_address)) == SOCKET_ERROR) {
         printf("sendto() failed. Error: %d\n", WSAGetLastError());
@@ -184,6 +189,7 @@ int try_sock_receive(SockWrapper* s_wrapper, int* received_index){
         WSACleanup();
         return 1;
     }
+    *received_index = buffer[0];
     int crc = crc_32((char*)buffer, 4);
     printf("confirm {crc: %d file_index: %d}\n", crc, buffer[0]);
     //crc check ->
@@ -213,7 +219,6 @@ Packet* gen_first_packet(char* message){
     memcpy(message + 8, filename, strlen(filename) + 1);
 
     Packet* p = gen_packet_struct(0, message, message_length);
-    printf("%d \n", message[0]);
     return p;
 }
 
@@ -233,21 +238,7 @@ Packet* gen_last_packet(FILE* file, char* message){
     memcpy(message + 8, &hash, sizeof(uint8_t));
     Packet* p = gen_packet_struct(-2, message, message_length);
 
-    printf("%d \n", message[0]);
     return p;
-}
-
-int resend_cycle(SockWrapper s_wrapper, char* message, int message_length, int file_index){
-//    int resend_tries = RESEND_TRIES;
-//    int success = 0;
-//    while ((--resend_tries) != 0){
-//        int result;
-//        if ((result = try_sock_receive(&s_wrapper, file_index)) == 0) { success = 1; break; }
-//        if (result == 2) {printf("Error: Socket timeout\n"); continue; }
-//        if (sock_send(&s_wrapper, message, message_length)) return 1;
-//    }
-//    if (!success) return 1;
-//    return 0;
 }
 
 /*makes a new copy in memory of the message*/
@@ -308,6 +299,23 @@ void clean_miss_map() {
             miss_map[i] = NULL;
         }
     }
+}
+
+char* extract_filename(char* whole_path){
+    int id = strlen(whole_path) - 1;
+    while(whole_path[id] != '/' && whole_path[id] != '\\' && id >= 0){
+        id--;
+    }
+//    if (id < 0) id = 0;
+    char* extracted = calloc(strlen(whole_path) - id, 1);
+    id++;
+    int j = 0;
+    while (id < strlen(whole_path)){
+        extracted[j] = whole_path[id];
+        id++;
+        j++;
+    }
+    return extracted;
 }
 
 
