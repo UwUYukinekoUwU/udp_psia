@@ -37,34 +37,40 @@ typedef struct {
 
 
 
-int sock_send(SockWrapper* s_wrapper, char* message, int message_length);
+int sock_send(SockWrapper* s_wrapper, Packet* packet);
 int gen_next_packet(FILE* file, char* result);
 int init_socket(SockWrapper* sock_wrapper, char* target_ip);
-int send_file(SockWrapper s_wrapper, FILE* input_file, char* filename);
-int try_sock_receive(SockWrapper* s_wrapper, int file_index);
-Packet* gen_first_packet( char* filename, char* message);
+int send_file(SockWrapper s_wrapper, FILE* input_file);
+int try_sock_receive(SockWrapper* s_wrapper, int* received_index);
+Packet* gen_first_packet(char* message);
 Packet* gen_last_packet(FILE* file, char* message);
 int resend_cycle(SockWrapper s_wrapper, char* message, int message_length, int file_index);
 int gen_hash(FILE* file, uint8_t* hash_to_fill);
 Packet* gen_packet_struct(int file_index, char* message, int message_length);
+int send_batch(SockWrapper* s_wrapper);
+int await_window_confirm(SockWrapper* s_wrapper);
 void free_packet(Packet* p);
 void clean_miss_map();
+void null_miss_map(int file_index);
+int miss_map_is_empty();
 
 
 
 Packet* miss_map[WINDOW_LEN] = {0};
-
+char* filename;
 
 
 int main(int argc, char** argv) {
     SockWrapper s_wrapper;
     if (init_socket(&s_wrapper, argv[2]) != 0) return 1;
 
+    filename = argv[1];
+
     FILE* input_file = fopen(argv[1], "rb");
     if (input_file == NULL){ printf("couldn't open file at location %s", argv[1]);
         return 1;
     }
-    if (send_file(s_wrapper, input_file, argv[1]) != 0){
+    if (send_file(s_wrapper, input_file) != 0){
         return 1;
     }
 
@@ -76,46 +82,86 @@ int main(int argc, char** argv) {
     return 0;
 }
 
-int send_file(SockWrapper s_wrapper, FILE* input_file, char* filename){
+int send_file(SockWrapper s_wrapper, FILE* input_file){
     char message[BUFF_SIZE] = {0};
     int file_index = 1;
+    int finished = 0;
+    int base;
 
-    // if (gen_first_packet(s_wrapper, filename, message))
-    //     return 1;
-    Packet *p = gen_first_packet(s_wrapper, filename, message);
-    if (sock_send(&s_wrapper, p->data, p->data_len)) {
-        free_packet(p);
-        return 1;
-    }
+    miss_map[0] = gen_first_packet(message);
 
-    while (1){
-        memcpy(message, &file_index, sizeof(int));
-        int message_length = gen_next_packet(input_file, message) + HEADER_LENGTH;
-        if (message_length == HEADER_LENGTH)
-            break;
+    while (!finished){
+        base = file_index;
+        for(int i = base; i < base + WINDOW_LEN; i++){
+            if (miss_map[i - base] != NULL) //this packet send failed
+                continue;
 
-        // Send the message
-        int new_limit = file_index + WINDOW_LEN;
-        while (file_index < new_limit) {
-            if(sock_send(&s_wrapper, message, message_length)) return 1;
+            int message_length = gen_next_packet(input_file, message) + HEADER_LENGTH;
+            if (message_length == HEADER_LENGTH){ //last packet
+                miss_map[i - base] = gen_last_packet(input_file, message);
+                finished = 1;
+            }
+            else{
+                miss_map[i - base] = gen_packet_struct(file_index, message, message_length);
+            }
             file_index++;
         }
-        if(resend_cycle(s_wrapper, message, message_length, file_index)) return 1;
-
-        usleep(50000);
-        printf("%d\n", ((int*)message)[0]);
-        file_index++;
+        if(send_batch(&s_wrapper)) return 1;
+        if(await_window_confirm(&s_wrapper)) return 1;
     }
 
-    // if (gen_last_packet(s_wrapper, input_file, message))
-    //     return 1;
-    Packet* p = gen_last_packet(-2, input_file, message);
+    //last window may fail and still wait for send
+    while(!miss_map_is_empty()){
+        if(send_batch(&s_wrapper)) return 1;
+        if(await_window_confirm(&s_wrapper)) return 1;
+    }
 
     return 0;
 }
 
-int sock_send(SockWrapper* s_wrapper, char* message, int message_length) {
-    if (sendto(s_wrapper->socket_handle, message, message_length, 0,
+int miss_map_is_empty(){
+    for(int i = 0; i < sizeof(miss_map) / sizeof(Packet*); i++){
+        if (miss_map[i] != NULL) return 0;
+    }
+    return 1;
+}
+
+int send_batch(SockWrapper* s_wrapper){
+    for(int i = 0; i < sizeof(miss_map) / sizeof(Packet*); i++){
+        if (miss_map[i] == NULL) continue;
+        if(sock_send(s_wrapper, miss_map[i])) return 1;
+    }
+    return 0;
+}
+
+void null_miss_map(int file_index){
+    int miss_map_size = sizeof(miss_map) / sizeof(Packet*);
+    if (file_index < 0 || file_index >= miss_map_size) return;
+
+    for(int i = 0; i < miss_map_size; i++){
+        if (miss_map[i]->file_index == file_index){
+            free_packet(miss_map[i]);
+            miss_map[i] = NULL;
+        }
+    }
+}
+
+int await_window_confirm(SockWrapper* s_wrapper){
+    int received_index = 0;
+    int listen_result;
+    for(int i = 0; i < WINDOW_LEN; i++){
+        listen_result = try_sock_receive(s_wrapper, &received_index);
+        if (listen_result == 1) return 1;
+        if (listen_result == 2) break;
+        null_miss_map(received_index);
+    }
+    return 0;
+}
+
+
+int sock_send(SockWrapper* s_wrapper, Packet* packet) {
+    memcpy(packet->data, &(packet->file_index), sizeof(int));
+    if (sendto(s_wrapper->socket_handle, packet->data, packet->data_len, 0,
              (struct sockaddr*)&(s_wrapper->target_address), sizeof(s_wrapper->target_address)) == SOCKET_ERROR) {
         printf("sendto() failed. Error: %d\n", WSAGetLastError());
         closesocket(s_wrapper->socket_handle);
@@ -125,7 +171,7 @@ int sock_send(SockWrapper* s_wrapper, char* message, int message_length) {
     return 0;
 }
 
-int try_sock_receive(SockWrapper* s_wrapper, int file_index){
+int try_sock_receive(SockWrapper* s_wrapper, int* received_index){
     int buffer[BUFF_SIZE / sizeof(int)] = {0};
     struct sockaddr sender_address;
     int sender_addr_len = sizeof(sender_address);
@@ -139,9 +185,8 @@ int try_sock_receive(SockWrapper* s_wrapper, int file_index){
         return 1;
     }
     int crc = crc_32((char*)buffer, 4);
-    printf("crc: %d file_index: %d\n", crc, file_index);
-    if (buffer[0] != file_index /*|| crc != buffer[1]*/)
-        return 1;
+    printf("confirm {crc: %d file_index: %d}\n", crc, buffer[0]);
+    //crc check ->
 
     return 0;
 }
@@ -158,7 +203,7 @@ int gen_next_packet(FILE* file, char* result){
     return bytes_read;
 }
 
-Packet* gen_first_packet(char* filename, char* message){
+Packet* gen_first_packet(char* message){
     int message_length = HEADER_LENGTH + strlen(filename);
     int crc = crc_32(filename, strlen(filename));
     for (int i = 0; i < 4; i++) {
@@ -168,9 +213,6 @@ Packet* gen_first_packet(char* filename, char* message){
     memcpy(message + 8, filename, strlen(filename) + 1);
 
     Packet* p = gen_packet_struct(0, message, message_length);
-    // if (sock_send(&s_wrapper, message, message_length)) return 1;
-
-    // if(resend_cycle(s_wrapper, message, message_length, 0)) return 1;
     printf("%d \n", message[0]);
     return p;
 }
@@ -189,27 +231,23 @@ Packet* gen_last_packet(FILE* file, char* message){
 
     memcpy(message + 4, &crc, CRC_LEN_BYTES);
     memcpy(message + 8, &hash, sizeof(uint8_t));
-
     Packet* p = gen_packet_struct(-2, message, message_length);
 
-    // if (sock_send(&s_wrapper, message, message_length)) return 1;
-
-    // if(resend_cycle(s_wrapper, message, message_length, -2)) return 1;
     printf("%d \n", message[0]);
     return p;
 }
 
 int resend_cycle(SockWrapper s_wrapper, char* message, int message_length, int file_index){
-    int resend_tries = RESEND_TRIES;
-    int success = 0;
-    while ((--resend_tries) != 0){
-        int result;
-        if ((result = try_sock_receive(&s_wrapper, file_index)) == 0) { success = 1; break; }
-        if (result == 2) {printf("Error: Socket timeout\n"); continue; }
-        if (sock_send(&s_wrapper, message, message_length)) return 1;
-    }
-    if (!success) return 1;
-    return 0;
+//    int resend_tries = RESEND_TRIES;
+//    int success = 0;
+//    while ((--resend_tries) != 0){
+//        int result;
+//        if ((result = try_sock_receive(&s_wrapper, file_index)) == 0) { success = 1; break; }
+//        if (result == 2) {printf("Error: Socket timeout\n"); continue; }
+//        if (sock_send(&s_wrapper, message, message_length)) return 1;
+//    }
+//    if (!success) return 1;
+//    return 0;
 }
 
 /*makes a new copy in memory of the message*/

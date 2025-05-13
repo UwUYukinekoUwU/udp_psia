@@ -8,3 +8,9 @@
 /dataSources.local.xml
 CMakeLists.txt
 *.exe
+sender.exe
+receiver.exe
+/sender/sender.exe
+/receiver/receiver.exe
+/sender/a.exe
+/receiver/a.exe
