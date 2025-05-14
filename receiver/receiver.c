@@ -108,6 +108,8 @@ int main() {
             }
         }
 
+        window_complete = 0;
+
         while(!window_complete){
 
             received_len = 0;
@@ -189,12 +191,12 @@ int writebuffer(Packet *packets, FILE **out){
             *out = fopen(filename, "wb");
         }
         else if(packets[i].id == -2){
-            toFile(&out, packets[i].content, packets[i].content_length);
-            fclose(&out);
+            toFile(*out, packets[i].content, packets[i].content_length);
+            fclose(*out);
             return 1;
         }
         else{
-            toFile(&out, packets[i].content, packets[i].content_length);
+            toFile(*out, packets[i].content, packets[i].content_length);
         }
     }
     return 0;
