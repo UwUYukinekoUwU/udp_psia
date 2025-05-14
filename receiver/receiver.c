@@ -195,8 +195,11 @@ Packet receive(SOCKET socketHandle){
 int writebuffer(Packet *packets, FILE **out){
     for (int i = 0; i < WINDOWSIZE; i++){
         if (packets[i].id == 0){
-            char *filename = packets[i].content;
+            char *filename = malloc(packets[i].content_length + 1);
+            memcpy(filename, packets[i].content, packets[i].content_length);
+            filename[packets[i].content_length] = '\0';
             *out = fopen(filename, "wb");
+            free(filename);
         }
         else if(packets[i].id == -2){
             toFile(*out, packets[i].content, packets[i].content_length);
