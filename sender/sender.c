@@ -15,8 +15,7 @@
 #define CRC_LEN_BYTES (32 / 8)
 #define HEADER_LENGTH (4 + CRC_LEN_BYTES)
 #define TIMEOUT_MS 100000
-#define RESEND_TRIES 3
-#define WINDOW_LEN 1
+#define WINDOW_LEN 5
 
 // PACKET FORMAT: (max size: 1024)
 // first packet: [zero(4), crc(CRC_LEN_BYTES), file name(-)]
@@ -133,6 +132,7 @@ int miss_map_is_empty(){
 int send_batch(SockWrapper* s_wrapper){
     for(int i = 0; i < sizeof(miss_map) / sizeof(Packet*); i++){
         if (miss_map[i] == NULL) continue;
+        printf("sending_packet %d\n", miss_map[i]->file_index);
         if(sock_send(s_wrapper, miss_map[i])) return 1;
     }
     return 0;
