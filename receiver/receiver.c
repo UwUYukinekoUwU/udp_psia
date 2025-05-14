@@ -15,6 +15,7 @@
 #define WINDOWSIZE 5
 #define TIMEOUT_MS 100000
 #define CORRECT -1
+#define TIMEOUT_ID -9999
 
 typedef struct {
     int id;
@@ -86,21 +87,18 @@ int main() {
     while (1) {
         for (int i = 0; i < WINDOWSIZE; i++){
             Packet packet = receive(socketHandle);
-            if (packet.id == -9999){
+            if (packet.id == TIMEOUT_ID){
                 invalid_packets[i] = lastReceived+1;
                 lastReceived++;
             }
             else{
                 lastReceived++;
-                if(packets[i].content != NULL){
-                    free(packets[i].content);
-                }
                 packets[i] = packet;
                 if(!checkCRC(packet)){
-                    invalid_packets[i] = -1;
+                    invalid_packets[i] = CORRECT;
                     if (packet.id == -2){
                         while (i < WINDOWSIZE){
-                            invalid_packets[i] = -1;
+                            invalid_packets[i] = CORRECT;
                             i++;
                         }
                         break;
@@ -119,7 +117,7 @@ int main() {
             received_len = 0;
             //send confirmations (positive only)
             for (int i= 0; i < WINDOWSIZE; i++){
-                if (invalid_packets[i] == -1){
+                if (invalid_packets[i] == CORRECT){
                     sendConfirmation(socketHandle, &senderAddress, packets[i].id);
                     received_len++;
                 }
@@ -130,11 +128,11 @@ int main() {
             //if rec_len == winsize -> win_compl. = 1
 
             for (int i = 0; i <WINDOWSIZE; i++){
-                if (invalid_packets[i] == -1) continue;
+                if (invalid_packets[i] == CORRECT) continue;
 
                 Packet new = receive(socketHandle);
 
-                if(new.id == -9999){
+                if(new.id == TIMEOUT_ID){
                     continue;
                 }
 
@@ -144,8 +142,9 @@ int main() {
                             free(packets[i].content);
                         }
                         packets[i] = new;
-                        invalid_packets[i] = -1;
+                        invalid_packets[i] = CORRECT;
                         sendConfirmation(socketHandle, &senderAddress, new.id);
+                        received_len++;
                     }
                 }
             }
@@ -159,7 +158,9 @@ int main() {
 
         writebuffer(packets, &file);
         for (int i = 0; i <WINDOWSIZE;i++){
-            free(packets[i].content);
+            if(packets[i].content != NULL){
+                free(packets[i].content);
+            }
         }
     }
 
@@ -178,7 +179,7 @@ Packet receive(SOCKET socketHandle){
         if (WSAGetLastError() == WSAETIMEDOUT){
             printf("recvfrom() failed. Error: %d\n", WSAGetLastError());
             Packet errorPacket;
-            errorPacket.id = -9999; // special error value
+            errorPacket.id = TIMEOUT_ID; // special error value
             errorPacket.crc = 0;
             errorPacket.content = NULL;
             errorPacket.content_length = 0;
