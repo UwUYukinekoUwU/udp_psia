@@ -12,6 +12,8 @@
 #define HEADER_LENGTH (4 + CRC_LEN_BYTES)
 #define BUFFER_SIZE 1024
 #define CONFIRMATION_SIZE 8
+#define WINDOWSIZE 5
+#define TIMEOUT_MS 100000
 
 typedef struct {
     int id;
@@ -20,19 +22,22 @@ typedef struct {
     int content_length;
 } Packet;
 
+int writebuffer(Packet *packets, FILE *out);
 void toFile(FILE* out, char* buffer, int bytesReceived);
 Packet parsePacket(char* buffer, int bytesReceived);
 int checkCRC(Packet packet);
 void sendConfirmation(SOCKET socketHandle, struct sockaddr_in* senderAddress, int id);
 int checkHash(char* fileName, uint8_t* receivedHash);
+Packet receive(SOCKET socketHandle);
+
+WSADATA wsaData;
+SOCKET socketHandle;
+struct sockaddr_in serverAddress, senderAddress;
+int senderAddressSize;
 
 int main() {
-    WSADATA wsaData;
-    SOCKET socketHandle;
-    struct sockaddr_in serverAddress, senderAddress;
-    char buffer[BUFFER_SIZE];
-    int senderAddressSize = sizeof(senderAddress);
-    int bytesReceived;
+
+    senderAddressSize = sizeof(senderAddress);
 
     // Winsock Initialization
     if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
@@ -46,6 +51,16 @@ int main() {
         WSACleanup();
         return 1;
     }
+
+     DWORD timeout = TIMEOUT_MS;
+    if (setsockopt(socketHandle, SOL_SOCKET, SO_RCVTIMEO,
+                   (const char*)&timeout, sizeof(timeout)) == SOCKET_ERROR) {
+        printf("setsockopt failed. Error: %d\n", WSAGetLastError());
+        closesocket(socketHandle);
+        WSACleanup();
+        return 1;
+    }
+
 
     // Bind Socket
     serverAddress.sin_family = AF_INET;
@@ -61,74 +76,127 @@ int main() {
     printf("Listening for UDP messages on port %d...\n", PORT);
 
     FILE* file = NULL;
-    int received_len = 0, lastConfirmed = -1;
+    int received_len = 0, lastReceived = -1;
+    int window_complete = 0;
+    Packet packets[WINDOWSIZE];
+    int invalid_packets[WINDOWSIZE] = {0};
 
     // Main Loop
     while (1) {
-        bytesReceived = recvfrom(socketHandle, buffer, sizeof(buffer), 0,
-                                 (struct sockaddr*)&senderAddress, &senderAddressSize);
-        if (bytesReceived == SOCKET_ERROR) {
-            printf("recvfrom() failed. Error: %d\n", WSAGetLastError());
-            break;
-        }
-
-        printf("received");
-
-        Packet packet = parsePacket(buffer, bytesReceived);
-
-        // First Packet: Initialize File
-        if (packet.id == 0) {
-            if (!checkCRC(packet)) {
-                lastConfirmed = 0;
-                sendConfirmation(socketHandle, &senderAddress, lastConfirmed);
-
-                //file_len = *((int*)(packet.content));
-                char* filename = packet.content;
-
-                file = fopen(filename, "wb");
-                if (!file) {
-                    printf("Failed to open file. Redirecting to stdout.\n");
-                    file = stdout;
+        for (int i = 0; i < WINDOWSIZE; i++){
+            Packet packet = receive(socketHandle);
+            if (packet.id == -9999){
+                invalid_packets[i] = lastReceived+1;
+                lastReceived++;
+            }
+            else{
+                lastReceived++;
+                packets[i] = packet;
+                if(!checkCRC(packet)){
+                    invalid_packets[i] = -1;
+                    if (packet.id == -2){
+                        while (i < WINDOWSIZE){
+                            invalid_packets[i] = -1;
+                            i++;
+                        }
+                        break;
+                    }
                 }
-                printf("Receiving file: %s\n", filename);
-            } else {
-                printf("CRC error in first packet.\n");
-                sendConfirmation(socketHandle, &senderAddress, -1);
+                else{
+                    invalid_packets[i] = packet.id;
+                }
             }
         }
-        // Subsequent Packets
-        else if (packet.id == lastConfirmed + 1 || packet.id == -2) {
-            if (!checkCRC(packet)) {
-                lastConfirmed = packet.id;
-                sendConfirmation(socketHandle, &senderAddress, lastConfirmed);
 
-                if (packet.id == -2){
-                    printf("File transfer complete.\n");
-                    break;
-                }
-                toFile(file, packet.content, packet.content_length);
-                received_len += packet.content_length;
+        while(!window_complete){
 
-                /*if (received_len >= file_len) {
-                    printf("File transfer complete.\n");
-                    break;
+            received_len = 0;
+            //send confirmations (positive only)
+            for (int i= 0; i < WINDOWSIZE; i++){
+                if (invalid_packets[i] == -1){
+                    sendConfirmation(socketHandle, &senderAddress, packets[i].id);
+                    received_len++;
                 }
-                */
-            } else {
-                printf("CRC error in packet %d.\n", packet.id);
-                sendConfirmation(socketHandle, &senderAddress, lastConfirmed);
             }
-        } else {
-            printf("Out-of-order packet received. Expected %d, got %d.\n", lastConfirmed + 1, packet.id);
-            sendConfirmation(socketHandle, &senderAddress, lastConfirmed);
-        }
 
-        free(packet.content);
+            //todo: if podminka ktera checkuje jestli se id prichoziho packetu shoduje s missing packetem
+            //kontrola crc pro ten prichozi packet
+            //if rec_len == winsize -> win_compl. = 1
+
+            for (int i = 0; i <WINDOWSIZE; i++){
+                if (invalid_packets[i] == -1) continue;
+
+                Packet new = receive(socketHandle);
+
+                if(new.id == -9999){
+                    continue;
+                }
+
+                if (!checkCRC(new)){
+                    if (new.id == invalid_packets[i]){
+                        packets[i] = new;
+                        invalid_packets[i] = -1;
+                        sendConfirmation(socketHandle, &senderAddress, new.id);
+                    }
+                }
+            }
+            if (received_len == WINDOWSIZE){
+                window_complete = 1;
+            }
+
+        }
+        //wait for new packets
+
+
+        writebuffer(packets, file);
+        for (int i = 0; i <WINDOWSIZE;i++){
+            free(packets[i].content);
+        }
     }
 
     if (file != stdout) fclose(file);
     closesocket(socketHandle);
     WSACleanup();
+    return 0;
+}
+
+Packet receive(SOCKET socketHandle){
+    char buffer[BUFFER_SIZE];
+    int bytesReceived;
+    bytesReceived = recvfrom(socketHandle, buffer, sizeof(buffer), 0,
+                                (struct sockaddr*)&senderAddress, &senderAddressSize);
+    if (bytesReceived == SOCKET_ERROR || bytesReceived == 0) {
+        if (!WSAGetLastError() == WSAETIMEDOUT){
+            printf("recvfrom() failed. Error: %d\n", WSAGetLastError());
+            Packet errorPacket;
+            errorPacket.id = -9999; // special error value
+            errorPacket.crc = 0;
+            errorPacket.content = NULL;
+            errorPacket.content_length = 0;
+            return errorPacket;
+        }
+    }
+
+    Packet packet = parsePacket(buffer, bytesReceived);
+    return packet;
+
+}
+
+int writebuffer(Packet *packets, FILE *out){
+    for (int i = 0; i < WINDOWSIZE; i++){
+        if (packets[i].id == 0){
+            char *filename = packets[i].content;
+            out = fopen(filename, "wb");
+        }
+        else if(packets[i].id == -2){
+            toFile(out, packets[i].content, packets[i].content_length);
+            fclose(out);
+            return 1;
+        }
+        else{
+            toFile(out, packets[i].content, packets[i].content_length);
+        }
+    }
     return 0;
 }
 
