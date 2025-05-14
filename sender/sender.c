@@ -306,7 +306,7 @@ char* extract_filename(char* whole_path){
     while(whole_path[id] != '/' && whole_path[id] != '\\' && id >= 0){
         id--;
     }
-//    if (id < 0) id = 0;
+
     char* extracted = calloc(strlen(whole_path) - id, 1);
     id++;
     int j = 0;
