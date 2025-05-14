@@ -22,7 +22,7 @@ typedef struct {
     int content_length;
 } Packet;
 
-int writebuffer(Packet *packets, FILE *out);
+int writebuffer(Packet *packets, FILE **out);
 void toFile(FILE* out, char* buffer, int bytesReceived);
 Packet parsePacket(char* buffer, int bytesReceived);
 int checkCRC(Packet packet);
@@ -148,7 +148,7 @@ int main() {
         //wait for new packets
 
 
-        writebuffer(packets, file);
+        writebuffer(packets, &file);
         for (int i = 0; i <WINDOWSIZE;i++){
             free(packets[i].content);
         }
@@ -166,7 +166,7 @@ Packet receive(SOCKET socketHandle){
     bytesReceived = recvfrom(socketHandle, buffer, sizeof(buffer), 0,
                                 (struct sockaddr*)&senderAddress, &senderAddressSize);
     if (bytesReceived == SOCKET_ERROR || bytesReceived == 0) {
-        if (!WSAGetLastError() == WSAETIMEDOUT){
+        if (WSAGetLastError() == WSAETIMEDOUT){
             printf("recvfrom() failed. Error: %d\n", WSAGetLastError());
             Packet errorPacket;
             errorPacket.id = -9999; // special error value
@@ -182,19 +182,19 @@ Packet receive(SOCKET socketHandle){
 
 }
 
-int writebuffer(Packet *packets, FILE *out){
+int writebuffer(Packet *packets, FILE **out){
     for (int i = 0; i < WINDOWSIZE; i++){
         if (packets[i].id == 0){
             char *filename = packets[i].content;
-            out = fopen(filename, "wb");
+            *out = fopen(filename, "wb");
         }
         else if(packets[i].id == -2){
-            toFile(out, packets[i].content, packets[i].content_length);
-            fclose(out);
+            toFile(&out, packets[i].content, packets[i].content_length);
+            fclose(&out);
             return 1;
         }
         else{
-            toFile(out, packets[i].content, packets[i].content_length);
+            toFile(&out, packets[i].content, packets[i].content_length);
         }
     }
     return 0;
