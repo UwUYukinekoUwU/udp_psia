@@ -14,6 +14,7 @@
 #define CONFIRMATION_SIZE 8
 #define WINDOWSIZE 5
 #define TIMEOUT_MS 100000
+#define CORRECT -1
 
 typedef struct {
     int id;
@@ -91,6 +92,9 @@ int main() {
             }
             else{
                 lastReceived++;
+                if(packets[i].content != NULL){
+                    free(packets[i].content);
+                }
                 packets[i] = packet;
                 if(!checkCRC(packet)){
                     invalid_packets[i] = -1;
@@ -136,6 +140,9 @@ int main() {
 
                 if (!checkCRC(new)){
                     if (new.id == invalid_packets[i]){
+                        if(packets[i].content != NULL){
+                            free(packets[i].content);
+                        }
                         packets[i] = new;
                         invalid_packets[i] = -1;
                         sendConfirmation(socketHandle, &senderAddress, new.id);
