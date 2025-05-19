@@ -6,17 +6,25 @@
 #include "../checksum.h"
 #include "../hash/sha1.h"
 
+#include <time.h>
+
 #pragma comment(lib, "ws2_32.lib")
 
-#define TARGET_PORT 5100
-#define SOURCE_PORT 5150
+#define TARGET_PORT 5200
+#define SOURCE_PORT 5202
 
 #define BUFF_SIZE 1024
 #define DFRAME_SIZE 1020
 #define CRC_LEN_BYTES (32 / 8)
 #define HEADER_LENGTH (4 + CRC_LEN_BYTES)
-#define TIMEOUT_MS 100000
+#define TIMEOUT_MS 1000
 #define WINDOW_LEN 5
+
+#define ERROR_PROBABILITY 20
+
+#ifndef DEBUG
+#define DEBUG 1
+#endif
 
 // PACKET FORMAT: (max size: 1024)
 // first packet: [zero(4), crc(CRC_LEN_BYTES), file name(-)]
@@ -110,6 +118,8 @@ int send_file(SockWrapper s_wrapper, FILE* input_file){
             }
             file_index++;
         }
+
+
         if(send_batch(&s_wrapper)) return 1;
         if(await_window_confirm(&s_wrapper)) return 1;
     }
@@ -133,7 +143,7 @@ int miss_map_is_empty(){
 int send_batch(SockWrapper* s_wrapper){
     for(int i = 0; i < sizeof(miss_map) / sizeof(Packet*); i++){
         if (miss_map[i] == NULL) continue;
-        printf("sending_packet %d\n", miss_map[i]->file_index);
+        printf("sending_packet %d Netderper custom state: ", miss_map[i]->file_index);
         if(sock_send(s_wrapper, miss_map[i])) return 1;
     }
     return 0;
@@ -167,13 +177,56 @@ int await_window_confirm(SockWrapper* s_wrapper){
 
 
 int sock_send(SockWrapper* s_wrapper, Packet* packet) {
-    if (sendto(s_wrapper->socket_handle, packet->data, packet->data_len, 0,
-             (struct sockaddr*)&(s_wrapper->target_address), sizeof(s_wrapper->target_address)) == SOCKET_ERROR) {
+
+    char* datacopy = malloc(packet->data_len);
+    if (datacopy == NULL) {
+        printf("Memory allocation failed for datacopy.\n");
+        return 1;
+    }
+
+    memcpy(datacopy, packet->data, packet->data_len);
+
+    Packet p = {
+            .file_index = packet->file_index,
+            .data_len = packet->data_len,
+            .data = datacopy
+    };
+
+    // Simulate packet loss and random bit change -------------------------------------------------------------------------------------------------
+    int random_num = rand();
+    // Generate a random number within a specific range (e.g., 1 to 100)
+    int range_num = (rand() % 100) + 1; // 1-100
+    if (range_num <= ERROR_PROBABILITY && DEBUG) {
+
+        //simulate packet loss
+        if (range_num <= ERROR_PROBABILITY / 2) {
+            printf("Simulating packet loss\n");
+            free(datacopy);
+            return 0;
+        }
+
+        //simulate random bit change
+        printf("Simulating random bit change\n");
+        for (int i = 0; i < range_num; i++) {
+            if (i<=p.data_len)
+                datacopy[i] = ~datacopy[i]; // Invert the bits
+        }
+    } else {
+        printf("No packet loss simulated.\n");
+    }
+    //-------------------------------------------------------------------------------------------------------------------------------------------
+
+    if (sendto(s_wrapper->socket_handle, p.data, packet->data_len, 0,
+               (struct sockaddr*)&(s_wrapper->target_address), sizeof(s_wrapper->target_address)) == SOCKET_ERROR) {
         printf("sendto() failed. Error: %d\n", WSAGetLastError());
         closesocket(s_wrapper->socket_handle);
         WSACleanup();
+
+        free(datacopy);
+
         return 1;
-        }
+    }
+    free(datacopy);
     return 0;
 }
 
@@ -191,9 +244,12 @@ int try_sock_receive(SockWrapper* s_wrapper, int* received_index){
         return 1;
     }
     *received_index = buffer[0];
-    int crc = crc_32((char*)buffer, 4);
+    int crc = crc_32((char*)received_index, 4);
     printf("confirm {crc: %d file_index: %d}\n", crc, buffer[0]);
-    //crc check ->
+    if (crc != buffer[1]) {
+        printf("CRC mismatch. Expected: %d, Received: %d\n", crc, buffer[1]);
+        return 2;
+    }
 
     return 0;
 }
@@ -246,11 +302,12 @@ Packet* gen_last_packet(FILE* file, char* message){
 Packet* gen_packet_struct(int file_index, char* message, int message_len) {
     char* copied_message = malloc(sizeof(char) * message_len);
     memcpy(copied_message, message, message_len * sizeof(char));
+
     Packet* p = (Packet*)malloc(sizeof(Packet));
     *p = (Packet) {
-        .file_index = file_index,
-        .data = copied_message,
-        .data_len = message_len
+            .file_index = file_index,
+            .data = copied_message,
+            .data_len = message_len
     };
     return p;
 }

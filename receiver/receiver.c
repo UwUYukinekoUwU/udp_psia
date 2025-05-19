@@ -3,6 +3,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <winsock2.h>
+#include <time.h>
 #include "../checksum.h"
 #include "../hash/sha1.h"
 
@@ -17,6 +18,8 @@
 #define TIMEOUT_MS 100000
 #define CORRECT -1
 #define TIMEOUT_ID -9999
+#define ERROR_PROBABILITY 20
+#define DEBUG 1
 
 typedef struct {
     int id;
@@ -40,7 +43,7 @@ int senderAddressSize;
 char *filename;
 
 int main() {
-
+    srand(time(0));
     senderAddressSize = sizeof(senderAddress);
 
     // Winsock Initialization
@@ -82,6 +85,9 @@ int main() {
     Packet packetBuffer[MAX_PACKETS];
     int received[MAX_PACKETS] = {0};
     int nextExpected = 0;
+    Packet last;
+    last.content = NULL;
+    last.content_length = 0;
     int endReceived = 0;
     FILE *file = NULL;
 
@@ -95,9 +101,17 @@ int main() {
         }
 
         if (packet.id == -2) {
-            sendConfirmation(socketHandle, &senderAddress, -2);
-            endReceived = 1;
-            continue;
+            last = packet;
+            uint8_t hash[20];
+            memcpy(hash, last.content, 20);
+            fclose(file);
+            endReceived = checkHash(hash);
+            if (endReceived == 1){
+                sendConfirmation(socketHandle, &senderAddress, -2);
+                continue;
+            }
+            file = fopen(filename, "wb");
+            fseek(file, 0, SEEK_END);
         }
 
         if (packet.id < 0 || packet.id >= MAX_PACKETS) continue;
@@ -128,11 +142,10 @@ int main() {
 
     fclose(file);
 
-    uint8_t hash[20];
-    memcpy(hash, packetBuffer[nextExpected].content, 20);
-    checkHash(hash);
 
-    free(packetBuffer[nextExpected].content);
+
+//    free(packetBuffer[0].content);
+    free(last.content);
     free(filename);
 
     closesocket(socketHandle);
@@ -199,12 +212,26 @@ void toFile(FILE* out, char* buffer, int bytesReceived) {
 }
 
 void sendConfirmation(SOCKET socketHandle, struct sockaddr_in* senderAddress, int id) {
-
     printf("Sending confirmation for packet ID: %d\n", id);
     char confirmation[CONFIRMATION_SIZE] = {0};
     memcpy(confirmation, &id, sizeof(id));
-    int crc = crc_32(confirmation, CONFIRMATION_SIZE);
+    int crc = crc_32((char*)&id, 4);
     memcpy(confirmation + sizeof(id), &crc, sizeof(crc));
+
+    int range_num = (rand() % 100) + 1; // 1-100
+    if (range_num <= ERROR_PROBABILITY && (DEBUG == 1)) {
+        if (range_num <= ERROR_PROBABILITY / 2) {
+            printf("Simulating packet loss\n");
+            return; // Simulate packet loss
+        }
+
+        printf("Simulating random bit change\n");
+        for (int i = 0; i < range_num; i++) {
+            if (i<=sizeof(confirmation)) // Ensure we don't go out of bounds
+                confirmation[i] = (char)~(confirmation[i]);
+            else break;
+        }
+    }
 
     senderAddress->sin_port = htons(5202);
     sendto(socketHandle, confirmation, CONFIRMATION_SIZE, 0, (struct sockaddr*)senderAddress, sizeof(*senderAddress));
