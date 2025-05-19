@@ -16,7 +16,7 @@
 #define CRC_LEN_BYTES (32 / 8)
 #define HEADER_LENGTH (4 + CRC_LEN_BYTES)
 #define TIMEOUT_MS 100000
-#define WINDOW_LEN 5
+#define WINDOW_LEN 1
 
 // PACKET FORMAT: (max size: 1024)
 // first packet: [zero(4), crc(CRC_LEN_BYTES), file name(-)]
@@ -226,17 +226,17 @@ Packet* gen_first_packet(char* message){
 Packet* gen_last_packet(FILE* file, char* message){
     int last = -2;
     int message_length = HEADER_LENGTH + sizeof(uint8_t);
-    uint8_t hash = 0;
-    gen_hash(file, &hash);
+    uint8_t hash[20];
+    gen_hash(file, hash);
     memcpy(message, &last, sizeof(int));
 
-    int crc = crc_32(&hash, sizeof(uint8_t));
+    int crc = crc_32(hash, 20);
     for (int i = 0; i < 4; i++) {
         crc = update_crc_32(crc, message[i]);
     }
 
     memcpy(message + 4, &crc, CRC_LEN_BYTES);
-    memcpy(message + 8, &hash, sizeof(uint8_t));
+    memcpy(message + 8, hash, 20);
     Packet* p = gen_packet_struct(-2, message, message_length);
 
     return p;
@@ -276,19 +276,18 @@ int gen_hash(FILE* file, uint8_t* hash_to_fill) {
     fread(buffer, 1, filesize, file);
 
     SHA1_CTX sha1;
-    uint8_t results[20];
     SHA1Init(&sha1);
     SHA1Update(&sha1, (unsigned char*)buffer, filesize);
-    SHA1Final(results, &sha1);
+    SHA1Final(hash_to_fill, &sha1);
 
     printf("SHA-1 Hash: ");
     for (int i = 0; i < 20; i++) {
-        printf("%02x", results[i]);
+        printf("%02x", hash_to_fill[i]);
     }
     printf("\n");
 
     free(buffer);
-    memcpy(hash_to_fill, results, sizeof(uint8_t));
+    memcpy(hash_to_fill, hash_to_fill, sizeof(uint8_t));
 
     return 0;
 }
