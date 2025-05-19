@@ -16,7 +16,7 @@
 #define CRC_LEN_BYTES (32 / 8)
 #define HEADER_LENGTH (4 + CRC_LEN_BYTES)
 #define TIMEOUT_MS 100000
-#define WINDOW_LEN 1
+#define WINDOW_LEN 5
 
 // PACKET FORMAT: (max size: 1024)
 // first packet: [zero(4), crc(CRC_LEN_BYTES), file name(-)]
@@ -225,7 +225,7 @@ Packet* gen_first_packet(char* message){
 
 Packet* gen_last_packet(FILE* file, char* message){
     int last = -2;
-    int message_length = HEADER_LENGTH + sizeof(uint8_t);
+    int message_length = HEADER_LENGTH + 20;
     uint8_t hash[20];
     gen_hash(file, hash);
     memcpy(message, &last, sizeof(int));
