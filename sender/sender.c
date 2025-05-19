@@ -8,8 +8,8 @@
 
 #pragma comment(lib, "ws2_32.lib")
 
-#define TARGET_PORT 5200
-#define SOURCE_PORT 5201
+#define TARGET_PORT 5100
+#define SOURCE_PORT 5150
 
 #define BUFF_SIZE 1024
 #define DFRAME_SIZE 1020

@@ -13,7 +13,7 @@
 #define HEADER_LENGTH (4 + CRC_LEN_BYTES)
 #define BUFFER_SIZE 1024
 #define CONFIRMATION_SIZE 8
-#define WINDOWSIZE 5
+#define MAX_PACKETS 2048
 #define TIMEOUT_MS 100000
 #define CORRECT -1
 #define TIMEOUT_ID -9999
@@ -79,103 +79,64 @@ int main() {
 
     printf("Listening for UDP messages on port %d...\n", PORT);
 
-    FILE* file = NULL;
-    int received_len = 0, lastReceived = -1;
-    int window_complete = 0;
-    Packet packets[WINDOWSIZE];
-    int invalid_packets[WINDOWSIZE] = {0};
+    Packet packetBuffer[MAX_PACKETS];
+    int received[MAX_PACKETS] = {0};
+    int nextExpected = 0;
+    int endReceived = 0;
+    FILE *file = NULL;
 
-    // Main Loop
-    while (1) {
-        for (int i = 0; i < WINDOWSIZE; i++){
-            Packet packet = receive(socketHandle);
-            if (packet.id == TIMEOUT_ID){
-                invalid_packets[i] = lastReceived+1;
-                lastReceived++;
-            }
-            else{
-                lastReceived++;
-                packets[i] = packet;
-                if(!checkCRC(packet)){
-                    invalid_packets[i] = CORRECT;
-                    if (packet.id == -2){
-                        while (i < WINDOWSIZE){
-                            invalid_packets[i] = CORRECT;
-                            i++;
-                        }
-                        break;
-                    }
-                }
-                else{
-                    invalid_packets[i] = packet.id;
-                }
-            }
+    while (!endReceived) {
+        Packet packet = receive(socketHandle);
+
+        if (packet.id == TIMEOUT_ID) continue;
+        if (checkCRC(packet)) {
+            printf("CRC mismatch on packet ID: %d\n", packet.id);
+            continue;
         }
 
-        window_complete = 0;
-
-        while(!window_complete){
-
-            received_len = 0;
-            //send confirmations (positive only)
-            for (int i= 0; i < WINDOWSIZE; i++){
-                if (invalid_packets[i] == CORRECT){
-                    sendConfirmation(socketHandle, &senderAddress, packets[i].id);
-                    received_len++;
-                }
-                if(packets[i].id == -2){
-                    received_len = WINDOWSIZE;
-                    break;
-                }
-            }
-
-
-            for (int i = 0; i <WINDOWSIZE; i++){
-                if (invalid_packets[i] == CORRECT) continue;
-
-                Packet new = receive(socketHandle);
-
-                if(new.id == TIMEOUT_ID){
-                    continue;
-                }
-
-                if (!checkCRC(new)){
-                    if (new.id == invalid_packets[i]){
-                        if(packets[i].content != NULL){
-                            free(packets[i].content);
-                        }
-                        packets[i] = new;
-                        invalid_packets[i] = CORRECT;
-                        sendConfirmation(socketHandle, &senderAddress, new.id);
-                        received_len++;
-                    }
-                }
-            }
-            if (received_len == WINDOWSIZE){
-                window_complete = 1;
-            }
-
-        }
-        //wait for new packets
-
-
-        int end = writebuffer(packets, &file);
-        for (int i = 0; i <WINDOWSIZE;i++){
-            if(packets[i].content != NULL){
-                free(packets[i].content);
-            }
-        }
-
-        if (end == 1)
-        {
+        if (packet.id == -2) {
             sendConfirmation(socketHandle, &senderAddress, -2);
-            closesocket(socketHandle);
-            WSACleanup();
-            free(filename);
-            break;
+            endReceived = 1;
+            continue;
         }
 
+        if (packet.id < 0 || packet.id >= MAX_PACKETS) continue;
+
+        if (received[packet.id]) {
+            sendConfirmation(socketHandle, &senderAddress, packet.id);
+            continue;
+        }
+        packetBuffer[packet.id] = packet;
+        received[packet.id] = 1;
+        printf("Received packet ID: %d\n", packet.id);
+        sendConfirmation(socketHandle, &senderAddress, packet.id);
+
+        while (received[nextExpected]) {
+            if (nextExpected == 0) {
+                filename = malloc(packetBuffer[0].content_length + 1);
+                memcpy(filename, packetBuffer[0].content, packetBuffer[0].content_length);
+                filename[packetBuffer[0].content_length] = '\0';
+                file = fopen(filename, "wb");
+            } else {
+                toFile(file, packetBuffer[nextExpected].content, packetBuffer[nextExpected].content_length);
+            }
+
+            free(packetBuffer[nextExpected].content);
+            nextExpected++;
+        }
     }
+
+    fclose(file);
+
+    uint8_t hash[20];
+    memcpy(hash, packetBuffer[nextExpected].content, 20);
+    checkHash(hash);
+
+    free(packetBuffer[nextExpected].content);
+    free(filename);
+
+    closesocket(socketHandle);
+    WSACleanup();
 
     return 0;
 }
@@ -202,44 +163,19 @@ Packet receive(SOCKET socketHandle){
 
 }
 
-int writebuffer(Packet *packets, FILE **out){
-    for (int i = 0; i < WINDOWSIZE; i++){
-        if (packets[i].id == 0){
-            filename = malloc(packets[i].content_length + 1);
-            memcpy(filename, packets[i].content, packets[i].content_length);
-            filename[packets[i].content_length] = '\0';
-            *out = fopen(filename, "wb");
-        }
-        else if(packets[i].id == -2){
-            continue;
-        }
-        else{
-            toFile(*out, packets[i].content, packets[i].content_length);
-        }
-    }
-
-    for(int i = 0; i < WINDOWSIZE; i++){
-        if (packets[i].id == -2){
-            fclose(*out);
-            uint8_t hash[20];
-            memcpy(hash, packets[i].content, 20);
-            checkHash(hash);
-            printf("File transfer complete.\n");
-            usleep(10000000);
-            return 1;
-        }
-    }
-
-    return 0;
-}
-
 Packet parsePacket(char* buffer, int bytesReceived) {
     Packet packet;
     packet.id = *((int*)buffer);
 
     packet.content_length = bytesReceived - HEADER_LENGTH;
+    packet.content = NULL;
     // Subsequent packets: Content includes file data
     packet.crc = *((int*)(buffer + 4));
+
+    if (packet.content_length <= 0){
+        return packet;
+    }
+
     packet.content = malloc(packet.content_length);
     if (!packet.content) {
         printf("Memory allocation failed for packet content.\n");
@@ -270,6 +206,7 @@ void sendConfirmation(SOCKET socketHandle, struct sockaddr_in* senderAddress, in
     int crc = crc_32(confirmation, CONFIRMATION_SIZE);
     memcpy(confirmation + sizeof(id), &crc, sizeof(crc));
 
+    senderAddress->sin_port = htons(5202);
     sendto(socketHandle, confirmation, CONFIRMATION_SIZE, 0, (struct sockaddr*)senderAddress, sizeof(*senderAddress));
 }
 
