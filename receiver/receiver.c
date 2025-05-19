@@ -164,6 +164,7 @@ int main() {
 
         if (end == 1)
         {
+            sendConfirmation(socketHandle, &senderAddress, -2);
             closesocket(socketHandle);
             WSACleanup();
             free(filename);
