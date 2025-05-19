@@ -13,7 +13,7 @@
 #define HEADER_LENGTH (4 + CRC_LEN_BYTES)
 #define BUFFER_SIZE 1024
 #define CONFIRMATION_SIZE 8
-#define WINDOWSIZE 1
+#define WINDOWSIZE 5
 #define TIMEOUT_MS 100000
 #define CORRECT -1
 #define TIMEOUT_ID -9999
@@ -123,6 +123,10 @@ int main() {
                     sendConfirmation(socketHandle, &senderAddress, packets[i].id);
                     received_len++;
                 }
+                if(packets[i].id == -2){
+                    received_len = WINDOWSIZE;
+                    break;
+                }
             }
 
 
@@ -173,12 +177,6 @@ int main() {
 
     }
 
-
-    printf("Receiver finished.\n");
-
-    usleep(10000000);
-    getchar();
-    getchar();
     return 0;
 }
 
@@ -266,6 +264,7 @@ void toFile(FILE* out, char* buffer, int bytesReceived) {
 
 void sendConfirmation(SOCKET socketHandle, struct sockaddr_in* senderAddress, int id) {
 
+    printf("Sending confirmation for packet ID: %d\n", id);
     char confirmation[CONFIRMATION_SIZE] = {0};
     memcpy(confirmation, &id, sizeof(id));
     int crc = crc_32(confirmation, CONFIRMATION_SIZE);
@@ -312,6 +311,7 @@ int checkHash(uint8_t* receivedHash) {
     for (int i = 0; i < 20; i++) {
         printf("%02x", receivedHash[i]);
     }
+    printf("\n");
 
     if (memcmp(results, receivedHash, 20) == 0) {
         printf("Hash match!\n");
