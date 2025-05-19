@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 #include <winsock2.h>
 #include "../checksum.h"
 #include "../hash/sha1.h"
@@ -29,13 +30,14 @@ void toFile(FILE* out, char* buffer, int bytesReceived);
 Packet parsePacket(char* buffer, int bytesReceived);
 int checkCRC(Packet packet);
 void sendConfirmation(SOCKET socketHandle, struct sockaddr_in* senderAddress, int id);
-int checkHash(char* fileName, uint8_t* receivedHash);
+int checkHash(uint8_t* receivedHash);
 Packet receive(SOCKET socketHandle);
 
 WSADATA wsaData;
 SOCKET socketHandle;
 struct sockaddr_in serverAddress, senderAddress;
 int senderAddressSize;
+char *filename;
 
 int main() {
 
@@ -54,7 +56,7 @@ int main() {
         return 1;
     }
 
-     DWORD timeout = TIMEOUT_MS;
+    DWORD timeout = TIMEOUT_MS;
     if (setsockopt(socketHandle, SOL_SOCKET, SO_RCVTIMEO,
                    (const char*)&timeout, sizeof(timeout)) == SOCKET_ERROR) {
         printf("setsockopt failed. Error: %d\n", WSAGetLastError());
@@ -123,9 +125,6 @@ int main() {
                 }
             }
 
-            //todo: if podminka ktera checkuje jestli se id prichoziho packetu shoduje s missing packetem
-            //kontrola crc pro ten prichozi packet
-            //if rec_len == winsize -> win_compl. = 1
 
             for (int i = 0; i <WINDOWSIZE; i++){
                 if (invalid_packets[i] == CORRECT) continue;
@@ -156,17 +155,29 @@ int main() {
         //wait for new packets
 
 
-        writebuffer(packets, &file);
+        int end = writebuffer(packets, &file);
         for (int i = 0; i <WINDOWSIZE;i++){
             if(packets[i].content != NULL){
                 free(packets[i].content);
             }
         }
+
+        if (end == 1)
+        {
+            closesocket(socketHandle);
+            WSACleanup();
+            free(filename);
+            break;
+        }
+
     }
 
-    if (file != stdout) fclose(file);
-    closesocket(socketHandle);
-    WSACleanup();
+
+    printf("Receiver finished.\n");
+
+    usleep(10000000);
+    getchar();
+    getchar();
     return 0;
 }
 
@@ -174,7 +185,7 @@ Packet receive(SOCKET socketHandle){
     char buffer[BUFFER_SIZE];
     int bytesReceived;
     bytesReceived = recvfrom(socketHandle, buffer, sizeof(buffer), 0,
-                                (struct sockaddr*)&senderAddress, &senderAddressSize);
+                             (struct sockaddr*)&senderAddress, &senderAddressSize);
     if (bytesReceived == SOCKET_ERROR || bytesReceived == 0) {
         if (WSAGetLastError() == WSAETIMEDOUT){
             printf("recvfrom() failed. Error: %d\n", WSAGetLastError());
@@ -195,28 +206,38 @@ Packet receive(SOCKET socketHandle){
 int writebuffer(Packet *packets, FILE **out){
     for (int i = 0; i < WINDOWSIZE; i++){
         if (packets[i].id == 0){
-            char *filename = malloc(packets[i].content_length + 1);
+            filename = malloc(packets[i].content_length + 1);
             memcpy(filename, packets[i].content, packets[i].content_length);
             filename[packets[i].content_length] = '\0';
             *out = fopen(filename, "wb");
-            free(filename);
         }
         else if(packets[i].id == -2){
-            toFile(*out, packets[i].content, packets[i].content_length);
-            fclose(*out);
-            return 1;
+            continue;
         }
         else{
             toFile(*out, packets[i].content, packets[i].content_length);
         }
     }
+
+    for(int i = 0; i < WINDOWSIZE; i++){
+        if (packets[i].id == -2){
+            fclose(*out);
+            uint8_t hash[20];
+            memcpy(hash, packets[i].content, 20);
+            checkHash(hash);
+            printf("File transfer complete.\n");
+            usleep(10000000);
+            return 1;
+        }
+    }
+
     return 0;
 }
 
 Packet parsePacket(char* buffer, int bytesReceived) {
     Packet packet;
     packet.id = *((int*)buffer);
-    
+
     packet.content_length = bytesReceived - HEADER_LENGTH;
     // Subsequent packets: Content includes file data
     packet.crc = *((int*)(buffer + 4));
@@ -252,9 +273,9 @@ void sendConfirmation(SOCKET socketHandle, struct sockaddr_in* senderAddress, in
     sendto(socketHandle, confirmation, CONFIRMATION_SIZE, 0, (struct sockaddr*)senderAddress, sizeof(*senderAddress));
 }
 
-int checkHash(char* fileName, uint8_t* receivedHash) {
+int checkHash(uint8_t* receivedHash) {
 
-    FILE* file = fopen(fileName, "rb");
+    FILE* file = fopen(filename, "rb");
     if (!file) {
         printf("Failed to open file for hashing.\n");
         return 0;
@@ -298,5 +319,5 @@ int checkHash(char* fileName, uint8_t* receivedHash) {
     }
     free(buffer);
     return memcmp(results, receivedHash, 20) == 0 ? 1 : 0;
-    
+
 }

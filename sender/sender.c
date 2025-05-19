@@ -9,6 +9,7 @@
 #pragma comment(lib, "ws2_32.lib")
 
 #define TARGET_PORT 5200
+#define SOURCE_PORT 5201
 
 #define BUFF_SIZE 1024
 #define DFRAME_SIZE 1020
@@ -324,18 +325,32 @@ int init_socket(SockWrapper* sock_wrapper, char* target_ip){
     SOCKET socket_handle;
     struct sockaddr_in target_address;
 
-    // Winsock
+    // Winsock initialization
     if (WSAStartup(MAKEWORD(2, 2), &wsa_data) != 0) {
         printf("WSAStartup failed. Error: %d\n", WSAGetLastError());
         return 1;
     }
 
-    // UDP socket
+    // UDP socket creation
     if ((socket_handle = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) == INVALID_SOCKET) {
         printf("Socket creation failed. Error: %d\n", WSAGetLastError());
         WSACleanup();
         return 1;
     }
+
+    // Bind the socket to SOURCE_PORT
+    struct sockaddr_in local_addr;
+    local_addr.sin_family = AF_INET;
+    local_addr.sin_addr.s_addr = INADDR_ANY;  // Bind to all interfaces
+    local_addr.sin_port = htons(SOURCE_PORT);
+    if (bind(socket_handle, (struct sockaddr*)&local_addr, sizeof(local_addr)) == SOCKET_ERROR) {
+        printf("bind() failed. Error: %d\n", WSAGetLastError());
+        closesocket(socket_handle);
+        WSACleanup();
+        return 1;
+    }
+
+    // Set socket timeout
     DWORD timeout = TIMEOUT_MS;
     if (setsockopt(socket_handle, SOL_SOCKET, SO_RCVTIMEO,
                    (const char*)&timeout, sizeof(timeout)) == SOCKET_ERROR) {
